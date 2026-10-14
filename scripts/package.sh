@@ -11,6 +11,9 @@ if [ "${RELEASE:-0}" = 1 ]; then
 	unset JFNATIVE_SERVER
 elif [ -n "${JFNATIVE_SERVER:-}" ]; then export JFNATIVE_SERVER; fi
 FEAT=(); [ "${DEV:-0}" = 1 ] && FEAT=(--features dev)
+# keep this computer's paths (home folder, user name) out of the binary's panic messages; RUSTFLAGS replaces the
+# rustflags from .cargo/config.toml, so the link flag is repeated here. The last matching prefix wins: most specific last
+export RUSTFLAGS="-C link-arg=-Wl,--allow-shlib-undefined --remap-path-prefix=$HOME=/home --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$ROOT=/src"
 cargo zigbuild --release --target armv7-unknown-linux-gnueabi.2.35 "${FEAT[@]}"
 ARES="${ARES_PACKAGE:-ares-package}"
 rm -rf build/stage build/out; mkdir -p build/stage build/out

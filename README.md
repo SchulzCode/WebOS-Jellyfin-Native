@@ -5,19 +5,35 @@ with GLES2 on the TV's GPU, and video is decoded by the TV's own media pipeline.
 **[Minimal Home](https://github.com/SchulzCode/WebOS-Minimal-Launcher)**, its companion launcher (same palette, Inter, cards, focus rings) and installs as its own app,
 `tld.my.jfnative` ("Jellyfin Native"), next to the official Jellyfin app if you have it.
 
-Unofficial and not affiliated with the Jellyfin project or LG. Tested on an LG OLED B4 (webOS 25) with Jellyfin 10.10+;
-other webOS 22+ models will likely work but are untested.
+Unofficial and not affiliated with the Jellyfin project or LG. Tested on one TV, see [Tested on](#tested-on).
+
+## Tested on
+
+Developed and tested on one TV; other models are untested. If it works (or doesn't) on yours, please open an issue.
+
+| | |
+|---|---|
+| TV | LG OLED55B4ELA (OLED B4, 2024, EU) |
+| Firmware | 33.31.75 |
+| webOS | webOS TV 25 (webOS 10.3.2, board K24) |
+| Root / homebrew | rooted, Homebrew Channel 0.7.3, SSH on |
+| Jellyfin server | 12.2.0 |
 
 ## Install
 
 You need an LG webOS TV with the [Homebrew Channel](https://github.com/webosbrew/webos-homebrew-channel) (developer
 mode or a rooted TV).
 
-1. Download `tld.my.jfnative_<version>_arm.ipk` from the Releases page.
+1. Download `tld.my.jfnative_<version>_arm.ipk` from the [Releases page](https://github.com/SchulzCode/WebOS-Jellyfin-Native/releases).
 2. Install it, e.g. with `ares-install tld.my.jfnative_<version>_arm.ipk` (webOS CLI) or the Homebrew Channel.
 3. Start "Jellyfin Native". It looks for Jellyfin servers on your network; pick yours or type its address, then
    approve the Quick Connect code from any signed-in Jellyfin app (profile → Quick Connect). Quick Connect must be
    enabled on the server (Dashboard → General).
+
+Finding the server uses Jellyfin's auto-discovery (UDP port 7359). A server in Docker usually only answers with host networking
+(broadcasts rarely make it through a published port), and discovery doesn't cross VLANs; behind a reverse proxy, set the address the server should
+announce under Dashboard → Networking → "Published server URIs". Otherwise just type the address; the app remembers
+it for the next sign-in.
 
 ## Privacy and security
 
