@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# keys "R R D OK" / "click:960:540": play remote presses into the running app. Only in DEV=1 builds, and only while
+# /media/developer/jfnative/dev-keys-enabled exists on the TV.
+. "$(dirname "$0")/env.sh"
+tv "echo '$*' > /media/developer/jfnative/keys; chmod 666 /media/developer/jfnative/keys"

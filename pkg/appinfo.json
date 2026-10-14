@@ -1,0 +1,16 @@
+{
+  "id": "tld.my.jfnative",
+  "version": "0.3.0",
+  "vendor": "me",
+  "type": "native",
+  "main": "jfnative",
+  "title": "Jellyfin Native",
+  "icon": "icon.png",
+  "largeIcon": "largeIcon.png",
+  "iconColor": "#07080c",
+  "bgColor": "#07080c",
+  "nativeLifeCycleInterfaceVersion": 2,
+  "handlesRelaunch": false,
+  "transparent": true,
+  "requiredMemory": 200
+}

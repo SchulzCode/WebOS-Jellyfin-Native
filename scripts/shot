@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# shot <out.png> [w h]: capture what the TV shows (the UI; video is not captured)
+. "$(dirname "$0")/env.sh"
+W=${2:-1920}; H=${3:-1080}
+tvl "luna-send -n 1 -f luna://com.webos.service.capture/executeOneShot '{\"path\":\"/tmp/cap.png\",\"method\":\"DISPLAY\",\"width\":$W,\"height\":$H,\"format\":\"PNG\"}'" >/dev/null 2>&1
+scp -O -q $SSH_OPTS "root@$TV_IP:/tmp/cap.png" "$1"

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# tvpull <remote-path> <local-path>: copy a file from the TV
+. "$(dirname "$0")/env.sh"
+exec scp -O -q $SSH_OPTS "root@$TV_IP:$1" "$2"

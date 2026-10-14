@@ -1,0 +1,11 @@
+/target
+/build
+# LG's libraries copied off the TV (proprietary, re-fetch with scripts/fetch-sysroot.sh)
+/sysroot
+# downloaded sources: webos-userland headers, FFmpeg 5.0.1 headers, Inter originals
+/third_party/webos-userland
+/third_party/ffmpeg
+/third_party/inter
+
+# local settings for the dev scripts (TV address, SSH key)
+config.env

@@ -1,0 +1,7 @@
+# LG webOS TVs: 32-bit ARMv7, soft-float calling convention, glibc 2.35 (webOS 25). Generic ARMv7 code, so it
+# runs on any of LG's TV chips.
+# Build with:  cargo zigbuild --release --target armv7-unknown-linux-gnueabi.2.35
+[target.armv7-unknown-linux-gnueabi]
+rustflags = [
+  "-C", "link-arg=-Wl,--allow-shlib-undefined",
+]

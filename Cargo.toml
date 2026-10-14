@@ -1,0 +1,28 @@
+[package]
+name = "jfnative"
+version = "0.3.0"
+edition = "2021"
+license = "0BSD"
+publish = false
+
+[dependencies]
+ureq = { version = "2.12", default-features = false, features = ["tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+glow = "0.14"
+fontdue = "0.9"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "abort"
+strip = "symbols"
+
+[features]
+# development hooks: remote presses injected over SSH (scripts/keys), GPU timing. Never in release builds.
+dev = []
