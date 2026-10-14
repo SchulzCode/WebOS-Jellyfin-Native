@@ -7,6 +7,13 @@ with GLES2 on the TV's GPU, and video is decoded by the TV's own media pipeline.
 
 Unofficial and not affiliated with the Jellyfin project or LG. Tested on one TV, see [Tested on](#tested-on).
 
+![Home: the focused item as a big hero, continue watching and next up](docs/screenshots/home.jpg)
+
+| | |
+|---|---|
+| ![A series: seasons and episodes](docs/screenshots/detail.jpg) | ![Genres and cast](docs/screenshots/cast.jpg) |
+| ![Library with sorting and an Unwatched filter](docs/screenshots/library.jpg) | ![Search with an on-screen keyboard](docs/screenshots/search.jpg) |
+
 ## Tested on
 
 Developed and tested on one TV; other models are untested. If it works (or doesn't) on yours, please open an issue.
@@ -168,7 +175,7 @@ Development helpers (only in `DEV=1 scripts/deploy.sh` builds, never in releases
 
 ## Licenses
 
-The code is [0BSD](LICENSE): do anything you like with it, no attribution needed.
+The code is [0BSD](LICENSE): do anything you like with it, no attribution needed. The film and series artwork in the screenshots (`docs/screenshots/`) belongs to its rights holders and is only shown to illustrate the app.
 
 Jellyfin Native links dynamically against the TV's own SDL2, FFmpeg (LGPL) and LG libraries at runtime; none of them
 are included. `assets/fonts/` is Inter (SIL Open Font License, see `assets/fonts/LICENSE.txt`).

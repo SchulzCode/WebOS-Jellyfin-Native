@@ -403,7 +403,7 @@ impl Screen for Detail {
                 wide_card(g, cx, &c, e, r, f, &t, &s);
                 cx.hot.push((r, Hot { row: 2, col: i as i32 }));
             }
-            bottom = ry + EH;
+            bottom = ry + EH + 76.0; // + the cards' title and subtitle lines
         }
 
         // genres + cast
