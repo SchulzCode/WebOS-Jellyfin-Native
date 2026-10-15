@@ -22,6 +22,8 @@ use std::time::{Duration, Instant};
 const IDLE_MENU: Duration = Duration::from_secs(120);
 const IDLE_PAUSED: Duration = Duration::from_secs(180);
 const IDLE_QUIT: Duration = Duration::from_secs(20 * 60);
+/// Held arrows / FF / RW: the remote repeats every ~50 ms, far too fast to follow - act on one repeat per this long.
+const REPEAT_EVERY: Duration = Duration::from_millis(80);
 
 // ---- preferences ----
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -103,6 +105,9 @@ pub struct App {
     stats: FrameStats,
     animating: bool,
     pending_action: Option<Action>,
+    /// when the last remote key repeat was acted on; and whether the held key's first press only woke the idle screen
+    last_repeat: Instant,
+    held_woke: bool,
     dev_keys: bool,
     gpu_timing: bool,
 }
@@ -130,7 +135,7 @@ impl App {
             let mut app = App {
                 win, g: Gfx::new(gl, 1920.0, 1080.0), images: Images::new(agent.clone()), pool: Arc::new(Pool::new(4, "net")), agent: agent.clone(),
                 client: None, stack: vec![], player: Player::new(agent), pui: None, hot: vec![], t0: Instant::now(), last: Instant::now(),
-                dirty: true, toast: None, cursor: None, launch_params: launch, exit_after_play: false, last_input: Instant::now(), idle: ui::Anim::new(0.0, 0.7), background: false, quit: false, last_clock: String::new(), pending_action: None, stats: FrameStats::default(), animating: false,
+                dirty: true, toast: None, cursor: None, launch_params: launch, exit_after_play: false, last_input: Instant::now(), idle: ui::Anim::new(0.0, 0.7), background: false, quit: false, last_clock: String::new(), pending_action: None, stats: FrameStats::default(), animating: false, last_repeat: Instant::now(), held_woke: false,
                 dev_keys: cfg!(feature = "dev") && std::path::Path::new(&format!("{}/dev-keys-enabled", crate::jf::DATA_DIR)).exists(),
                 gpu_timing: cfg!(feature = "dev") && std::path::Path::new(&format!("{}/gpu-timing", crate::jf::DATA_DIR)).exists(),
             };
@@ -320,8 +325,19 @@ impl App {
             sdl::QUIT => self.quit = true,
             sdl::KEYDOWN => {
                 let k = e.key.keysym;
-                crate::log!("key sc={} sym={} rep={}", k.scancode, k.sym, e.key.repeat);
-                if let Some(key) = ui::map_key(k.scancode, k.sym) { self.key(key); }
+                let repeat = k.scancode == ui::REMOTE_REPEAT || e.key.repeat != 0;
+                if !repeat { crate::log!("key sc={} sym={} rep={}", k.scancode, k.sym, e.key.repeat); }
+                let Some(key) = ui::map_key(k.scancode, k.sym) else { return };
+                if repeat {
+                    // holding a button: only movement repeats (not OK, Back, play/pause), at a pace one can follow,
+                    // and not when the first press only woke the idle screen
+                    if self.held_woke || !matches!(key, Key::Up | Key::Down | Key::Left | Key::Right | Key::Ff | Key::Rw) { return; }
+                    if self.last_repeat.elapsed() < REPEAT_EVERY { return; }
+                    self.last_repeat = Instant::now();
+                } else {
+                    self.held_woke = self.idle.to > 0.5 || self.idle.v > 0.02;
+                }
+                self.key(key);
             }
             sdl::MOUSEMOTION => self.pointer(e.motion.x as f32, e.motion.y as f32, false),
             sdl::MOUSEBUTTONDOWN => if e.button.button == 1 { self.pointer(e.button.x as f32, e.button.y as f32, true) },

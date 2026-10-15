@@ -47,10 +47,15 @@ pub fn smooth(t: f32) -> f32 { let t = t.clamp(0.0, 1.0); t * t * (3.0 - 2.0 * t
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key { Up, Down, Left, Right, Ok, Back, Play, Pause, Stop, Ff, Rw, Exit, Red, Green, Yellow, Blue, ChUp, ChDown, Info, Char(char), Backspace }
 
+/// A held remote button: after 0.5 s LG's SDL sends it again every ~50 ms as a new key-down (repeat flag 0) with this
+/// scancode (measured on this TV).
+pub const REMOTE_REPEAT: i32 = 257;
+
 pub fn map_key(scancode: i32, sym: i32) -> Option<Key> {
     // LG's SDL delivers the remote's buttons as scancode 1 ("unknown") with the real code in `sym`
-    // (arrows 79-82, OK 40, Back 482, ...), measured on this TV. Keyboards send normal scancodes.
-    let code = if scancode == 1 { sym } else { scancode };
+    // (arrows 79-82, OK 40, Back 482, ...), measured on this TV; a held button repeats as scancode 257 (see REMOTE_REPEAT).
+    // Keyboards send normal scancodes.
+    let code = if scancode == 1 || scancode == REMOTE_REPEAT { sym } else { scancode };
     Some(match code {
         82 => Key::Up, 81 => Key::Down, 80 => Key::Left, 79 => Key::Right,
         40 | 88 => Key::Ok,
