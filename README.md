@@ -93,6 +93,9 @@ it for the next sign-in.
   - **Pointer**: the control row (−10 s, play/pause, +10 s, tracks, chapter), the progress bar (click = seek),
     skip intro, up next and the track menu are clickable.
   - **Image subtitles (PGS/DVD), decoded on the TV** with its own libavcodec. No server burn-in.
+  - **Bluetooth lip sync**: while the TV's sound goes to Bluetooth headphones (detected from LG's `btaudiosrc`), audio
+    is played slightly earlier than the picture (default 25 ms; ▲ menu → "Bluetooth lip sync", ◀ ▶ in 25 ms steps).
+    Connecting or disconnecting mid-film is picked up within ~3 s.
   - Skip intro/recap (Jellyfin media segments), and Up next with a 10 s countdown and autoplay. The queue is the rest of the
     series across seasons, however the episode was started (detail page, Continue watching, search, a launcher card).
   - Progress reported to Jellyfin (start / every 10 s / pause / stop), so Continue watching stays

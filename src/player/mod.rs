@@ -12,6 +12,25 @@ use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 
+/// Is the TV's sound going to Bluetooth headphones/speakers right now? LG's btaudiosrc keeps an ALSA capture of the
+/// TV's mix open while it streams A2DP (measured on the B4: card0 pcm10c, state RUNNING, owner btaudiosrc). Readable
+/// from the app jail; a few small /proc reads.
+pub fn bluetooth_audio() -> bool {
+    let Ok(cards) = std::fs::read_dir("/proc/asound") else { return false };
+    for card in cards.flatten().filter(|c| c.file_name().to_string_lossy().starts_with("card")) {
+        let Ok(pcms) = std::fs::read_dir(card.path()) else { continue };
+        for pcm in pcms.flatten().filter(|p| { let n = p.file_name().to_string_lossy().into_owned(); n.starts_with("pcm") && n.ends_with('c') }) {
+            let Ok(st) = std::fs::read_to_string(pcm.path().join("sub0/status")) else { continue };
+            if !st.contains("state: RUNNING") { continue; }
+            let owner = st.lines().find_map(|l| l.strip_prefix("owner_pid").and_then(|r| r.trim_start_matches([' ', ':']).trim().parse::<u32>().ok()));
+            if let Some(pid) = owner {
+                if std::fs::read(format!("/proc/{pid}/cmdline")).map_or(false, |c| String::from_utf8_lossy(&c).contains("btaudiosrc")) { return true; }
+            }
+        }
+    }
+    false
+}
+
 struct Session { shared: Arc<Shared>, obj: Arc<Obj>, window: CString, req: Request }
 
 pub struct Player {
@@ -49,6 +68,7 @@ impl Player {
                 self.last_pos = req.start_ns;
                 self.paused = false;
                 s.shared.paused_req.store(false, Ordering::Relaxed);
+                s.shared.audio_lead_ns.store(req.audio_lead_ns, Ordering::Relaxed);
                 s.shared.seek_to.store(req.start_ns, Ordering::Release);
                 return;
             }
@@ -147,6 +167,9 @@ impl Player {
             }
         }
     }
+
+    /// The lead the running session plays audio with (0 = none).
+    pub fn audio_lead_ns(&self) -> i64 { self.cur.as_ref().map_or(0, |s| s.shared.audio_lead_ns.load(Ordering::Relaxed)) }
 
     /// Blocks (bounded) until every session has released the decoder; used on app exit/background.
     pub fn shutdown(&mut self) {

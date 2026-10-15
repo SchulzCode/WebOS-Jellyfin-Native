@@ -28,8 +28,11 @@ const REPEAT_EVERY: Duration = Duration::from_millis(80);
 // ---- preferences ----
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
-pub struct Prefs { pub sub_size: usize, pub subs_auto: bool, pub audio_lang: String, pub autoplay: bool, pub stats: bool, pub remember_tracks: bool }
-impl Default for Prefs { fn default() -> Self { Prefs { sub_size: 1, subs_auto: true, audio_lang: String::new(), autoplay: true, stats: false, remember_tracks: true } } }
+pub struct Prefs { pub sub_size: usize, pub subs_auto: bool, pub audio_lang: String, pub autoplay: bool, pub stats: bool, pub remember_tracks: bool,
+    /// lip sync for Bluetooth headphones: how much earlier the sound is played. LG's pipeline already makes up for most
+    /// of the Bluetooth delay; 25 ms was right by ear with AirPods Pro 2 (SBC - all this TV sends besides aptX).
+    pub bt_audio_lead_ms: i32 }
+impl Default for Prefs { fn default() -> Self { Prefs { sub_size: 1, subs_auto: true, audio_lang: String::new(), autoplay: true, stats: false, remember_tracks: true, bt_audio_lead_ms: 25 } } }
 
 static PREFS: OnceLock<Mutex<Prefs>> = OnceLock::new();
 fn prefs_cell() -> &'static Mutex<Prefs> {

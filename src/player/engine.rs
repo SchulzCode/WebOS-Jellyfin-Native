@@ -43,6 +43,8 @@ pub struct Request {
     /// an embedded image subtitle track (PGS/DVD) to decode here and hand to the UI as bitmaps
     pub sub_stream: Option<i32>,
     pub window_id: String,
+    /// lip sync for Bluetooth headphones: audio is handed to the pipeline this much earlier than its picture
+    pub audio_lead_ns: i64,
 }
 
 /// One text subtitle event from an embedded track (SRT/ASS/...), demuxed here instead of extracted by the server.
@@ -80,6 +82,8 @@ pub struct Shared {
     pub seek_to: AtomicI64,
     /// between a seek request and the new pipeline's loadCompleted: the old pipeline's late events are ignored
     pub seeking: AtomicBool,
+    /// audio lead (see Request::audio_lead_ns); an in-place seek may change it, it applies from the next pipeline on
+    pub audio_lead_ns: AtomicI64,
 }
 
 impl Shared {
@@ -235,6 +239,7 @@ pub fn spawn(req: Request, agent: ureq::Agent, shared: Arc<Shared>, obj: Arc<Obj
     std::thread::Builder::new().name("engine".into()).spawn(move || {
         let t0 = Instant::now();
         shared.offset_ns.store(req.offset_ns, Ordering::Relaxed);
+        shared.audio_lead_ns.store(req.audio_lead_ns, Ordering::Relaxed);
         if let Err(e) = run(&req, agent, &shared, &obj, t0) { shared.fail(e); }
         // teardown: Unload, wait for the pipeline to confirm, then destroy the object
         let o = obj.0.swap(ptr::null_mut(), Ordering::AcqRel);
@@ -533,6 +538,10 @@ unsafe fn feed_loop(req: &Request, sh: &Arc<Shared>, obj: &Arc<Obj>, fmt: *mut A
         }
         log!("player: loadCompleted after {} ms", t_seek.unwrap_or(t0).elapsed().as_millis());
         if !sh.paused_req.load(Ordering::Relaxed) { smp::smp_play(o); }
+        // lip sync: audio stamped earlier is played earlier, so after the headphones' delay it meets its picture.
+        // Audio that would land before 0 is dropped (it is from before the first picture anyway).
+        let lead = sh.audio_lead_ns.load(Ordering::Relaxed);
+        if lead != 0 { log!("player: audio {} ms ahead of the picture (Bluetooth lip sync)", lead / 1_000_000); }
 
         // ---- feed: everything queued, then keep reading. BufferFull = the pipeline is ahead; wait.
         let target = loop {
@@ -559,7 +568,9 @@ unsafe fn feed_loop(req: &Request, sh: &Arc<Shared>, obj: &Arc<Obj>, fmt: *mut A
                 continue;
             }
             let u = queue.front().unwrap();
-            match smp::smp_feed(o, u.data.as_ptr(), u.data.len() as u32, u.pts, u.es) as u8 {
+            let pts = if u.es == ES_AUDIO { u.pts - lead } else { u.pts };
+            if pts < 0 { queue.pop_front(); continue; }
+            match smp::smp_feed(o, u.data.as_ptr(), u.data.len() as u32, pts, u.es) as u8 {
                 b'O' => { fed[u.es as usize] += 1; queue.pop_front(); }
                 b'B' => { let tw = Instant::now(); std::thread::sleep(Duration::from_millis(8)); t_full += tw.elapsed(); }
                 _ => { log!("player: feed error at pts {}", u.pts); queue.pop_front(); }

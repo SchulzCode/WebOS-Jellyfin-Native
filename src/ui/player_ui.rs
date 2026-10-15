@@ -61,7 +61,16 @@ pub struct PlayerUi {
     ended_handled: bool,
     /// paused when the app went to the background (e.g. LG's screensaver): pause again once the picture is back
     pause_on_picture: bool,
+    /// the TV's sound goes to Bluetooth (checked every few seconds): audio is played earlier by the lip-sync lead
+    bt: bool,
+    bt_checked: Instant,
+    /// a lip-sync change waiting for the key presses to settle before it reloads the pipeline
+    lead_pending: Option<Instant>,
 }
+
+/// Lip-sync steps and range for Bluetooth headphones, in ms.
+const LEAD_STEP: i32 = 25;
+const LEAD_MAX: i32 = 500;
 
 // ---- remembered track choices, per series (by language/title, so they carry over to the next episode)
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
@@ -105,7 +114,9 @@ impl PlayerUi {
             seek: None, menu: None, menu_a: Anim::new(0.0, 12.0), cues: vec![], local_cues: Default::default(), img_q: VecDeque::new(), img_cur: None, segments: vec![],
             upnext_dismissed: false, upnext_at: None, done: false, suspended_at: None, last_pos: 0, flash: None, error: None, fell_back: false,
             started_at: Instant::now(), ended_handled: false, pause_on_picture: false, garbage: vec![], shown_cue: None, stream_sid: String::new(),
+            bt: crate::player::bluetooth_audio(), bt_checked: Instant::now(), lead_pending: None,
         };
+        if p.bt { crate::log!("player: sound goes to Bluetooth, lip sync {} ms", prefs().bt_audio_lead_ms); }
         // always fetch the full item: rows don't carry media sources
         let (c1, tx, id) = (p.c.clone(), p.mb.tx.clone(), p.spec.item.id.clone());
         let tx2 = tx.clone();
@@ -184,6 +195,11 @@ impl PlayerUi {
     /// -1 = off; 'c' chapter number).
     fn entries(&self) -> Vec<(String, Option<(char, i32)>)> {
         let mut v = menu_entries(self.ms.as_ref());
+        if self.bt {
+            let ms = prefs().bt_audio_lead_ms;
+            v.push(("Bluetooth lip sync".into(), None));
+            v.push((if ms == 0 { "Off   ◀ ▶".into() } else { format!("Sound {ms} ms earlier   ◀ ▶") }, Some(('d', 0))));
+        }
         let ch = self.chapters();
         if ch.len() > 1 {
             v.push(("Chapters".into(), None));
@@ -234,9 +250,12 @@ impl PlayerUi {
             audio_stream: if self.method == Method::Direct { self.audio.map(|a| file_index(&ms, a)) } else { None },
             sub_stream: if self.method == Method::Direct { sub_stream.map(|i| file_index(&ms, i)) } else { None },
             window_id: String::new(),
+            audio_lead_ns: self.lead_ns(),
         });
         self.load_text_subs();
     }
+
+    fn lead_ns(&self) -> i64 { if self.bt { prefs().bt_audio_lead_ms.clamp(0, LEAD_MAX) as i64 * 1_000_000 } else { 0 } }
 
     /// An embedded text track while playing the file directly: its cues come from the engine, not from the server.
     fn sub_is_local(&self, i: i32) -> bool {
@@ -335,6 +354,16 @@ impl PlayerUi {
         if self.menu.is_some() {
             let entries = self.entries();
             let m = self.menu.as_mut().unwrap();
+            // the lip-sync entry: Left/Right change it (applied once the presses settle), OK does nothing
+            if entries.get(m.idx).and_then(|e| e.1).map_or(false, |e| e.0 == 'd') && matches!(k, Key::Left | Key::Right | Key::Ok) {
+                if k != Key::Ok {
+                    let mut p = prefs();
+                    p.bt_audio_lead_ms = (p.bt_audio_lead_ms + if k == Key::Left { -LEAD_STEP } else { LEAD_STEP }).clamp(0, LEAD_MAX);
+                    crate::app::set_prefs(p);
+                    self.lead_pending = Some(Instant::now());
+                }
+                return Action::None;
+            }
             match k {
                 Key::Back | Key::Left => { self.menu = None; }
                 Key::Up => { let mut i = m.idx; while i > 0 { i -= 1; if entries[i].1.is_some() { m.idx = i; break; } } }
@@ -548,6 +577,23 @@ impl PlayerUi {
             if prefs().autoplay && !self.upnext_dismissed { if let Some(n) = self.next_spec() { self.exit(player); return (true, Action::Play(n)); } }
             self.exit(player);
             return (true, Action::None);
+        }
+        // Bluetooth headphones connected / disconnected mid-film, or a lip-sync change: restart the pipeline at the
+        // current position with the new lead (an in-place seek, ~0.6 s)
+        if self.bt_checked.elapsed() > Duration::from_secs(3) {
+            self.bt_checked = Instant::now();
+            let bt = crate::player::bluetooth_audio();
+            if bt != self.bt { crate::log!("player: Bluetooth sound {}", if bt { "on" } else { "off" }); self.bt = bt; self.lead_pending = Some(Instant::now() - Duration::from_secs(1)); }
+        }
+        if self.lead_pending.map_or(false, |t| t.elapsed() > Duration::from_millis(600)) && self.seek.is_none() {
+            self.lead_pending = None;
+            if player.has_picture() && player.audio_lead_ns() != self.lead_ns() {
+                let pos = player.position_ns();
+                let paused = player.paused();
+                crate::log!("player: lip sync now {} ms", self.lead_ns() / 1_000_000);
+                self.launch(player, pos);
+                if paused { self.pause_on_picture = true; }
+            }
         }
         // seek commits after a short pause in the button presses
         if let Some((t, at, _)) = self.seek { if at.elapsed() > Duration::from_millis(700) { self.seek = None; self.seek_to(player, t); } busy = true; }
@@ -812,7 +858,7 @@ impl PlayerUi {
                 match key {
                     None => { y += 18.0; label(g, x + 56.0, y, text); y += 46.0; }
                     Some((kind, v)) => {
-                        let sel = match kind { 'a' => self.audio == Some(*v), 'c' => false, _ => if *v < 0 { self.sub.is_none() } else { self.sub == Some(*v) } };
+                        let sel = match kind { 'a' => self.audio == Some(*v), 'c' | 'd' => false, _ => if *v < 0 { self.sub.is_none() } else { self.sub == Some(*v) } };
                         let f = i == idx;
                         let r = Rect::new(x + 36.0, y, w - 72.0, 60.0);
                         if f { g.rect(r, Color(1.0, 1.0, 1.0, 1.0), 16.0); }
