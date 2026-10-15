@@ -31,14 +31,14 @@ const GRAY: &str = "gray:";
 fn decode(buf: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     if split_scan_jpeg(buf) {
         let mut d = jpeg_decoder::Decoder::new(std::io::Cursor::new(buf));
-        let px = d.decode().ok()?;
-        let info = d.info()?;
-        let rgba: Vec<u8> = match info.pixel_format {
-            jpeg_decoder::PixelFormat::RGB24 => px.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-            jpeg_decoder::PixelFormat::L8 => px.iter().flat_map(|&l| [l, l, l, 255]).collect(),
-            _ => return None,
-        };
-        return Some((info.width as u32, info.height as u32, rgba));
+        if let (Ok(px), Some(info)) = (d.decode(), d.info()) {
+            let rgba: Option<Vec<u8>> = match info.pixel_format {
+                jpeg_decoder::PixelFormat::RGB24 => Some(px.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect()),
+                jpeg_decoder::PixelFormat::L8 => Some(px.iter().flat_map(|&l| [l, l, l, 255]).collect()),
+                _ => None, // CMYK etc.: let image try
+            };
+            if let Some(rgba) = rgba { return Some((info.width as u32, info.height as u32, rgba)); }
+        }
     }
     let img = image::load_from_memory(buf).ok()?.to_rgba8();
     Some((img.width(), img.height(), img.into_raw()))
@@ -49,6 +49,7 @@ fn split_scan_jpeg(d: &[u8]) -> bool {
     if d.len() < 4 || d[0] != 0xFF || d[1] != 0xD8 { return false; }
     let (mut i, mut frame) = (2usize, None);
     while i + 4 <= d.len() && d[i] == 0xFF {
+        if d[i + 1] == 0xFF { i += 1; continue; } // fill byte
         let (m, len) = (d[i + 1], u16::from_be_bytes([d[i + 2], d[i + 3]]) as usize);
         match m {
             0xC0 | 0xC1 => frame = d.get(i + 9).copied(),

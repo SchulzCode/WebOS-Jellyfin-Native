@@ -257,9 +257,13 @@ impl Screen for Home {
             self.load(cx);
         }
         let mut busy = false;
+        // the Downloading row coming or going must not move the focus to another row
+        let focus_key = if self.row >= 0 { self.cur().map(|r| r.key.clone()) } else { None };
+        let mut dl_changed = false;
         for m in self.mb.drain() {
             match m {
                 Msg::Downloads(res) => {
+                    dl_changed = true;
                     self.dl_busy = false;
                     self.dl_at = Instant::now();
                     let wait = match res {
@@ -302,6 +306,9 @@ impl Screen for Home {
             }
         }
         let vis = self.visible_rows();
+        if let (true, Some(k)) = (dl_changed, focus_key) {
+            if let Some(n) = vis.iter().position(|&ri| self.rows[ri].1.key == k) { self.row = n as i32; }
+        }
         if !vis.is_empty() && self.row >= vis.len() as i32 { self.row = vis.len() as i32 - 1; }
         // vertical scroll: the focused row sits at ROWS_TOP
         let mut y = 0.0;

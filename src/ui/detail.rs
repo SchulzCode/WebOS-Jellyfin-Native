@@ -169,10 +169,10 @@ impl Detail {
                 if deleting { return Action::None; }
                 if self.cbtn == 1 {
                     if let (Some(Confirm::Ready(r)), Some(c), Some(base)) = (self.confirm.take(), cx.client.clone(), self.manage.clone()) {
-                        crate::log!("delete: {} {:?} ({} bytes)", self.item.kind, r.title, r.size);
+                        crate::log!("delete: {} {:?} ({} {}, {} bytes)", self.item.kind, r.title, r.app, r.id, r.size);
                         self.confirm = Some(Confirm::Deleting);
-                        let (tx, id) = (self.mb.tx.clone(), self.item.id.clone());
-                        cx.pool.spawn(move || { let _ = tx.send(Msg::Deleted(feed::delete(&c.agent, &base, &c.auth(), &id))); crate::net::wake(); });
+                        let (tx, id, expect) = (self.mb.tx.clone(), self.item.id.clone(), r.id);
+                        cx.pool.spawn(move || { let _ = tx.send(Msg::Deleted(feed::delete(&c.agent, &base, &c.auth(), &id, expect))); crate::net::wake(); });
                         return Action::None;
                     }
                 }
@@ -206,15 +206,19 @@ impl Detail {
                 for (i, l) in g.text.wrap(&msg, 23.0, W::Regular, w, 4).iter().enumerate() { g.text(x, y + 46.0 + i as f32 * 34.0, 23.0, W::Regular, MUTED, l); }
             }
             Confirm::Ready(r) => {
+                // exactly what Sonarr/Radarr will delete, under their own name
+                let arr = if r.app == "sonarr" { "Sonarr" } else { "Radarr" };
+                let name = format!("{}{}  ·  in {arr}", r.title, r.year.map(|y| format!(" ({y})")).unwrap_or_default());
+                let n = g.text.ellipsize(&name, 26.0, W::Semi, w);
+                g.text(x, y, 26.0, W::Semi, TEXT, &n);
                 let what = if r.app == "sonarr" {
                     let seasons = if r.seasons > 0 { format!("{} season{}  ·  ", r.seasons, if r.seasons == 1 { "" } else { "s" }) } else { String::new() };
                     format!("The whole series: {seasons}{} episode file{}  ·  {}", r.files, if r.files == 1 { "" } else { "s" }, feed::size(r.size))
-                } else { format!("The film{}  ·  {}", r.year.map(|y| format!(" ({y})")).unwrap_or_default(), feed::size(r.size)) };
-                g.text(x, y, 26.0, W::Semi, TEXT, &what);
-                let arr = if r.app == "sonarr" { "Sonarr" } else { "Radarr" };
+                } else { format!("The film  ·  {}", feed::size(r.size)) };
+                g.text(x, y + 40.0, 22.0, W::Medium, MUTED, &what);
                 let body = format!("The files are deleted from the server and {arr} stops downloading it. This can't be undone.");
-                for (i, l) in g.text.wrap(&body, 23.0, W::Regular, w, 2).iter().enumerate() { g.text(x, y + 48.0 + i as f32 * 34.0, 23.0, W::Regular, MUTED, l); }
-                y += 150.0;
+                for (i, l) in g.text.wrap(&body, 22.0, W::Regular, w, 2).iter().enumerate() { g.text(x, y + 84.0 + i as f32 * 32.0, 22.0, W::Regular, MUTED, l); }
+                y += 186.0;
                 if let Some(v) = r.volumes.first().filter(|v| v.total > 0) {
                     // the disk: used, with the part this frees marked
                     let used = v.total.saturating_sub(v.free);

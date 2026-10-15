@@ -74,14 +74,14 @@ pub fn storage(agent: &ureq::Agent, base: &str) -> Result<Storage, String> {
 /// What a delete would remove (and, after a delete, what it removed).
 #[derive(Deserialize, Clone, Debug, Default)]
 #[serde(default)]
-pub struct Removal { pub app: String, pub title: String, pub year: Option<i32>, pub size: u64, pub files: u32, pub seasons: u32, pub volumes: Vec<Volume> }
+pub struct Removal { pub app: String, /** Sonarr's/Radarr's id: the delete must name it */ pub id: u64, pub title: String, pub year: Option<i32>, pub size: u64, pub files: u32, pub seasons: u32, pub volumes: Vec<Volume> }
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct ErrorBody { error: String }
 
-fn manage(agent: &ureq::Agent, base: &str, auth: &str, what: &str, id: &str) -> Result<Removal, String> {
-    let url = format!("{base}/manage/{what}?id={id}");
+fn manage(agent: &ureq::Agent, base: &str, auth: &str, what: &str, id: &str, expect: Option<u64>) -> Result<Removal, String> {
+    let url = format!("{base}/manage/{what}?id={id}{}", expect.map(|e| format!("&expect={e}")).unwrap_or_default());
     let req = if what == "delete" { agent.post(&url) } else { agent.get(&url) };
     match req.set("Authorization", auth).timeout(Duration::from_secs(if what == "delete" { 60 } else { 15 })).call() {
         Ok(r) => r.into_json::<Removal>().map_err(|e| e.to_string()),
@@ -91,10 +91,11 @@ fn manage(agent: &ureq::Agent, base: &str, auth: &str, what: &str, id: &str) -> 
 }
 
 /// What deleting this film / series would remove, plus the current free space. Err explains why it can't be deleted.
-pub fn preview(agent: &ureq::Agent, base: &str, auth: &str, id: &str) -> Result<Removal, String> { manage(agent, base, auth, "item", id) }
+pub fn preview(agent: &ureq::Agent, base: &str, auth: &str, id: &str) -> Result<Removal, String> { manage(agent, base, auth, "item", id, None) }
 
-/// Delete the film / the whole series (files included) through Sonarr/Radarr.
-pub fn delete(agent: &ureq::Agent, base: &str, auth: &str, id: &str) -> Result<Removal, String> { manage(agent, base, auth, "delete", id) }
+/// Delete the film / the whole series (files included) through Sonarr/Radarr. `expect` is the preview's `id`: the server
+/// refuses if the Jellyfin title now points at anything else.
+pub fn delete(agent: &ureq::Agent, base: &str, auth: &str, id: &str, expect: u64) -> Result<Removal, String> { manage(agent, base, auth, "delete", id, Some(expect)) }
 
 /// The downloads worth showing, with picture addresses made absolute. Err = no feed there (or it failed).
 pub fn fetch(agent: &ureq::Agent, url: &str) -> Result<Vec<Download>, String> {

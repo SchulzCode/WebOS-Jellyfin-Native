@@ -90,7 +90,7 @@ pub fn hero(g: &mut Gfx, cx: &mut Cx, d: &Download, age: f32, x: f32, bottom: f3
     if let Some(yr) = d.year { meta.push(yr.to_string()); }
     meta.push(if d.kind == "movie" { "Film".into() } else { "Series".into() });
     if d.size > 0 { meta.push(crate::feed::size(d.size)); }
-    meta.push("Not in your library yet".into());
+    if d.kind == "movie" { meta.push("Not in your library yet".into()); }
     g.text(x, y, 20.0, W::Regular, MUTED, &meta.join("  ·  "));
     // progress
     let (p, _) = d.live(age);
