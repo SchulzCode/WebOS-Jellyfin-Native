@@ -9,3 +9,4 @@
 
 # local settings for the dev scripts (TV address, SSH key)
 config.env
+__pycache__/
