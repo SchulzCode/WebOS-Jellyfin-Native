@@ -1,6 +1,6 @@
 [package]
 name = "jfnative"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 license = "0BSD"
 publish = false
@@ -12,6 +12,8 @@ serde_json = "1"
 glow = "0.14"
 fontdue = "0.9"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# baseline JPEGs with one scan per colour (Sonarr/Radarr thumbnails): image 0.25's zune-jpeg decodes them as green stripes
+jpeg-decoder = { version = "0.3", default-features = false }
 
 [build-dependencies]
 cc = "1"

@@ -73,6 +73,19 @@ impl Library {
 impl Screen for Library {
     fn name(&self) -> &'static str { "library" }
 
+    fn resumed(&mut self, _cx: &mut Cx) {
+        // a title deleted from its page: gone from the server's list too, so the page offsets still line up
+        let keep: Vec<bool> = self.items.iter().map(|i| !crate::jf::is_deleted(i)).collect();
+        let gone = keep.iter().filter(|k| !**k).count();
+        if gone == 0 { return; }
+        let mut k = keep.iter();
+        self.items.retain(|_| *k.next().unwrap());
+        let mut k = keep.iter();
+        self.focus.retain(|_| *k.next().unwrap());
+        if self.total > 0 { self.total -= gone as i64; }
+        self.idx = self.idx.min(self.items.len().saturating_sub(1));
+    }
+
     fn key(&mut self, k: Key, cx: &mut Cx) -> Action {
         let n = self.items.len();
         match k {

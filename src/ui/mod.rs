@@ -1,6 +1,7 @@
 //! UI building blocks shared by every screen: theme, animation, remote keys, local time, widgets, icons.
 pub mod connect;
 pub mod detail;
+pub mod downloads;
 pub mod home;
 pub mod library;
 pub mod player_ui;
@@ -238,7 +239,7 @@ pub fn button(g: &mut Gfx, x: f32, y: f32, text: &str, icon: Option<Icon>, focus
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Icon { Play, Pause, Restart, Check, Heart, HeartFilled, Search, Subs, Next, Back10, Fwd10 }
+pub enum Icon { Play, Pause, Restart, Check, Heart, HeartFilled, Search, Subs, Next, Back10, Fwd10, Trash }
 
 /// Simple vector icons drawn from rects/triangles/lines into an s*s box.
 pub fn draw_icon(g: &mut Gfx, i: Icon, x: f32, y: f32, s: f32, c: Color) {
@@ -278,6 +279,17 @@ pub fn draw_icon(g: &mut Gfx, i: Icon, x: f32, y: f32, s: f32, c: Color) {
             g.rect(Rect::new(x + 6.0 * u, y + 13.0 * u, 5.0 * u, 2.2 * u), c, 1.0 * u);
             g.rect(Rect::new(x + 12.5 * u, y + 13.0 * u, 5.5 * u, 2.2 * u), c, 1.0 * u);
             g.rect(Rect::new(x + 6.0 * u, y + 9.0 * u, 8.0 * u, 2.2 * u), c, 1.0 * u);
+        }
+        Icon::Trash => {
+            g.line(p(4.0, 6.0), p(20.0, 6.0), 2.4 * u, c);
+            g.line(p(9.5, 6.0), p(10.0, 3.0), 2.2 * u, c);
+            g.line(p(10.0, 3.0), p(14.0, 3.0), 2.2 * u, c);
+            g.line(p(14.0, 3.0), p(14.5, 6.0), 2.2 * u, c);
+            g.line(p(6.0, 6.0), p(7.2, 21.0), 2.4 * u, c);
+            g.line(p(7.2, 21.0), p(16.8, 21.0), 2.4 * u, c);
+            g.line(p(16.8, 21.0), p(18.0, 6.0), 2.4 * u, c);
+            g.line(p(10.2, 10.0), p(10.4, 17.0), 2.0 * u, c);
+            g.line(p(13.8, 10.0), p(13.6, 17.0), 2.0 * u, c);
         }
         Icon::Next => { g.tri([p(4.0, 4.0), p(4.0, 20.0), p(15.0, 12.0)], c); g.rect(Rect::new(x + 16.5 * u, y + 4.0 * u, 3.5 * u, 16.0 * u), c, 1.0 * u); }
         Icon::Back10 | Icon::Fwd10 => {

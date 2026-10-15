@@ -58,6 +58,14 @@ impl Search {
 impl Screen for Search {
     fn name(&self) -> &'static str { "search" }
 
+    fn resumed(&mut self, _cx: &mut Cx) {
+        if self.results.iter().any(crate::jf::is_deleted) {
+            self.results.retain(|i| !crate::jf::is_deleted(i));
+            self.focus = self.results.iter().map(|_| Anim::new(0.0, 14.0)).collect();
+            self.ridx = self.ridx.min(self.results.len().saturating_sub(1));
+        }
+    }
+
     fn key(&mut self, k: Key, cx: &mut Cx) -> Action {
         let nk = keys().len();
         match k {

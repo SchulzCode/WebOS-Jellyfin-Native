@@ -2,16 +2,20 @@
 //! genres + cast at the bottom (each opens a grid of matching titles).
 use super::*;
 use crate::app::PlaySpec;
+use crate::feed::{self, Removal};
 use crate::jf::{enc, Item, Person};
 use crate::net::Mailbox;
 
-enum Msg { Item(Result<Item, String>), Seasons(Vec<Item>), Episodes(String, Vec<Item>), Similar(Vec<Item>), Toggled }
+enum Msg { Item(Result<Item, String>), Seasons(Vec<Item>), Episodes(String, Vec<Item>), Similar(Vec<Item>), Toggled, Preview(Result<Removal, String>), Deleted(Result<Removal, String>), CanManage(bool) }
+
+/// The delete confirmation: asking the server what would go, waiting for the answer, deleting, or why it can't.
+enum Confirm { Loading, Ready(Removal), Deleting, Failed(String) }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Zone { Buttons, Seasons, Row, People }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Btn { Play, Restart, Version, Watched, Favorite }
+enum Btn { Play, Restart, Version, Watched, Favorite, Delete }
 
 /// The bottom row: genres, then the cast.
 #[derive(Clone)]
@@ -44,6 +48,15 @@ pub struct Detail {
     px: Anim,
     /// the page slides up while the genres/cast row is focused
     sy: Anim,
+    /// the server's helper for deleting (feed.rs), once it has said that deleting is switched on there
+    manage: Option<String>,
+    manage_ok: bool,
+    confirm: Option<Confirm>,
+    /// 0 = Cancel, 1 = Delete
+    cbtn: usize,
+    confirm_a: Anim,
+    /// actions for the app (after a delete: a toast, then back)
+    pending: Vec<Action>,
 }
 
 const PW: f32 = 170.0;
@@ -57,12 +70,18 @@ impl Detail {
     pub fn new(item: Item, cx: &mut Cx) -> Detail {
         let mut d = Detail {
             item, full: false, mb: Mailbox::new(), seasons: vec![], season: 0, scol: 0, episodes: vec![], episodes_of: String::new(), similar: vec![],
-            zone: Zone::Buttons, btn: 0, col: 0, sx: Anim::new(0.0, 10.0), focus: vec![], bfocus: (0..5).map(|_| Anim::new(0.0, 14.0)).collect(),
+            zone: Zone::Buttons, btn: 0, col: 0, sx: Anim::new(0.0, 10.0), focus: vec![], bfocus: (0..7).map(|_| Anim::new(0.0, 14.0)).collect(),
             backdrop: Backdrop::new(), appear: Anim::new(0.0, 4.0), shown: None, shown_a: Anim::new(1.0, 7.0),
             version: 0, pcol: 0, px: Anim::new(0.0, 10.0), sy: Anim::new(0.0, 8.0),
+            manage: cx.client.as_ref().and_then(|c| feed::base(&c.s.server)), manage_ok: false, confirm: None, cbtn: 0, confirm_a: Anim::new(0.0, 9.0), pending: vec![],
         };
         d.appear.set(1.0);
         if let Some(c) = cx.client { d.backdrop.set(c.backdrop(&d.item, 1920)); }
+        // the Delete button only where the server has the helper with deleting switched on
+        if let (Some(c), Some(base)) = (cx.client.clone(), d.manage.clone()) {
+            let tx = d.mb.tx.clone();
+            cx.pool.spawn(move || { let ok = feed::storage(&c.agent, &base).map_or(false, |s| s.delete); let _ = tx.send(Msg::CanManage(ok)); crate::net::wake(); });
+        }
         d.reload(cx);
         d
     }
@@ -121,7 +140,114 @@ impl Detail {
         if it.media_sources.len() > 1 { v.push((Btn::Version, self.version_label(), Icon::Subs)); }
         v.push((Btn::Watched, if it.played() { "Watched".into() } else { "Mark watched".into() }, Icon::Check));
         v.push((Btn::Favorite, String::new(), if it.favorite() { Icon::HeartFilled } else { Icon::Heart }));
+        if self.can_delete() { v.push((Btn::Delete, String::new(), Icon::Trash)); }
         v
+    }
+
+    /// A film or a whole series, Jellyfin says this user may delete, and the server has the helper that does it.
+    fn can_delete(&self) -> bool {
+        (self.item.is_series() || self.item.kind == "Movie") && self.item.can_delete == Some(true) && self.manage_ok
+    }
+
+    fn start_delete_check(&mut self, cx: &mut Cx) {
+        let (Some(c), Some(base)) = (cx.client.clone(), self.manage.clone()) else { return };
+        self.confirm = Some(Confirm::Loading);
+        self.cbtn = 0;
+        self.confirm_a.set(1.0);
+        let (tx, id) = (self.mb.tx.clone(), self.item.id.clone());
+        cx.pool.spawn(move || { let _ = tx.send(Msg::Preview(feed::preview(&c.agent, &base, &c.auth(), &id))); crate::net::wake(); });
+    }
+
+    fn confirm_key(&mut self, k: Key, cx: &mut Cx) -> Action {
+        let deleting = matches!(self.confirm, Some(Confirm::Deleting));
+        match k {
+            Key::Back => if !deleting { self.confirm = None; },
+            Key::Exit => return Action::Exit,
+            Key::Left => self.cbtn = 0,
+            Key::Right => if matches!(self.confirm, Some(Confirm::Ready(_))) { self.cbtn = 1; },
+            Key::Ok => {
+                if deleting { return Action::None; }
+                if self.cbtn == 1 {
+                    if let (Some(Confirm::Ready(r)), Some(c), Some(base)) = (self.confirm.take(), cx.client.clone(), self.manage.clone()) {
+                        crate::log!("delete: {} {:?} ({} bytes)", self.item.kind, r.title, r.size);
+                        self.confirm = Some(Confirm::Deleting);
+                        let (tx, id) = (self.mb.tx.clone(), self.item.id.clone());
+                        cx.pool.spawn(move || { let _ = tx.send(Msg::Deleted(feed::delete(&c.agent, &base, &c.auth(), &id))); crate::net::wake(); });
+                        return Action::None;
+                    }
+                }
+                self.confirm = None;
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    fn draw_confirm(&mut self, g: &mut Gfx, cx: &mut Cx) {
+        let Some(cf) = &self.confirm else { return };
+        let a = smooth(self.confirm_a.v);
+        g.alpha = a;
+        g.rect(Rect::new(0.0, 0.0, 1920.0, 1080.0), Color(0.0, 0.0, 0.0, 0.74), 0.0);
+        let p = Rect::new(460.0, 250.0 + (1.0 - a) * 20.0, 1000.0, 560.0);
+        g.shadow(p.offset(0.0, 20.0), Color(0.0, 0.0, 0.0, 0.6), 30.0, 50.0);
+        g.rect(p, Color::hex(0x161722, 1.0), 30.0);
+        let (x, w) = (p.x + 56.0, p.w - 112.0);
+        let danger = Color::hex(0xff6b6b, 1.0);
+        let title = format!("Delete {}?", self.item.name);
+        let t = g.text.ellipsize(&title, 44.0, W::Bold, w);
+        g.text_t(x, p.y + 50.0, 44.0, W::Bold, TEXT, &t, -0.8);
+        let mut y = p.y + 130.0;
+        match cf {
+            Confirm::Loading => { spinner(g, x + 18.0, y + 30.0, 16.0, cx.t, MUTED); g.text(x + 54.0, y + 16.0, 24.0, W::Regular, MUTED, "Checking with Sonarr / Radarr…"); }
+            Confirm::Deleting => { spinner(g, x + 18.0, y + 30.0, 16.0, cx.t, MUTED); g.text(x + 54.0, y + 16.0, 24.0, W::Regular, MUTED, "Deleting…"); }
+            Confirm::Failed(e) => {
+                g.text(x, y, 24.0, W::Semi, danger, "This can't be deleted from the TV");
+                let msg: String = e.chars().take(1).flat_map(|c| c.to_uppercase()).chain(e.chars().skip(1)).collect();
+                for (i, l) in g.text.wrap(&msg, 23.0, W::Regular, w, 4).iter().enumerate() { g.text(x, y + 46.0 + i as f32 * 34.0, 23.0, W::Regular, MUTED, l); }
+            }
+            Confirm::Ready(r) => {
+                let what = if r.app == "sonarr" {
+                    let seasons = if r.seasons > 0 { format!("{} season{}  ·  ", r.seasons, if r.seasons == 1 { "" } else { "s" }) } else { String::new() };
+                    format!("The whole series: {seasons}{} episode file{}  ·  {}", r.files, if r.files == 1 { "" } else { "s" }, feed::size(r.size))
+                } else { format!("The film{}  ·  {}", r.year.map(|y| format!(" ({y})")).unwrap_or_default(), feed::size(r.size)) };
+                g.text(x, y, 26.0, W::Semi, TEXT, &what);
+                let arr = if r.app == "sonarr" { "Sonarr" } else { "Radarr" };
+                let body = format!("The files are deleted from the server and {arr} stops downloading it. This can't be undone.");
+                for (i, l) in g.text.wrap(&body, 23.0, W::Regular, w, 2).iter().enumerate() { g.text(x, y + 48.0 + i as f32 * 34.0, 23.0, W::Regular, MUTED, l); }
+                y += 150.0;
+                if let Some(v) = r.volumes.first().filter(|v| v.total > 0) {
+                    // the disk: used, with the part this frees marked
+                    let used = v.total.saturating_sub(v.free);
+                    let bar = Rect::new(x, y + 44.0, w, 14.0);
+                    g.rect(bar, Color(1.0, 1.0, 1.0, 0.12), 7.0);
+                    let uw = bar.w * used as f32 / v.total as f32;
+                    let fw = (bar.w * r.size.min(used) as f32 / v.total as f32).max(4.0);
+                    g.rect(Rect::new(bar.x, bar.y, uw, bar.h), Color(1.0, 1.0, 1.0, 0.55), 7.0);
+                    g.rect(Rect::new(bar.x + uw - fw, bar.y, fw, bar.h), danger.a(0.9 + 0.1 * (cx.t * 3.0).sin()), 7.0);
+                    g.text(x, y, 22.0, W::Medium, TEXT, &format!("Free space: {} now  →  {} afterwards", feed::size(v.free), feed::size(v.free + r.size)));
+                    g.text_r(x + w, y + 3.0, 19.0, W::Regular, FAINT, &format!("of {}", feed::size(v.total)));
+                }
+            }
+        }
+        // buttons: Cancel first (and focused first), Delete in red
+        let by = p.bottom() - 112.0;
+        let can = matches!(cf, Confirm::Ready(_));
+        let fc = if self.cbtn == 0 { 1.0 } else { 0.0 };
+        let r0 = button(g, x, by, if matches!(cf, Confirm::Failed(_)) { "Close" } else { "Cancel" }, None, fc, false, 68.0);
+        cx.hot.push((r0, Hot { row: 9, col: 0 }));
+        if can || matches!(cf, Confirm::Deleting) {
+            let label = "Delete";
+            let tw = g.text.measure(label, 24.0, W::Semi, 0.0);
+            let r1 = Rect::new(r0.right() + 18.0, by, tw + 26.0 + 14.0 + 64.0, 68.0);
+            let f = if self.cbtn == 1 { 1.0 } else { 0.0 };
+            if f > 0.0 { g.shadow(r1.offset(0.0, 10.0), danger.a(0.35), 34.0, 26.0); }
+            g.rect(r1, if f > 0.0 { danger } else { danger.a(0.16) }, 34.0);
+            let ink = if f > 0.0 { Color::hex(0x1a0505, 1.0) } else { danger };
+            draw_icon(g, Icon::Trash, r1.x + 32.0, by + 21.0, 26.0, ink);
+            g.text(r1.x + 72.0, by + (68.0 - 28.8) / 2.0, 24.0, W::Semi, ink, label);
+            cx.hot.push((r1, Hot { row: 9, col: 1 }));
+        }
+        g.alpha = 1.0;
     }
 
     /// For a show: the first episode in the loaded season that isn't finished (else the first).
@@ -145,6 +271,7 @@ impl Detail {
             }
             Btn::Restart => { let q = if it.is_episode() { self.queue_after(&it) } else { vec![] }; let src = self.source_id(); Action::Play(PlaySpec::from_start(it).with_queue(q).with_source(src)) }
             Btn::Version => { self.version = (self.version + 1) % it.media_sources.len().max(1); Action::None }
+            Btn::Delete => { self.start_delete_check(cx); Action::None }
             Btn::Watched | Btn::Favorite => {
                 let Some(c) = cx.client.clone() else { return Action::None };
                 let tx = self.mb.tx.clone();
@@ -170,7 +297,10 @@ impl Screen for Detail {
 
     fn resumed(&mut self, cx: &mut Cx) { self.episodes_of.clear(); self.reload(cx); }
 
+    fn poll_action(&mut self) -> Action { if self.pending.is_empty() { Action::None } else { self.pending.remove(0) } }
+
     fn key(&mut self, k: Key, cx: &mut Cx) -> Action {
+        if self.confirm.is_some() { return self.confirm_key(k, cx); }
         let has_seasons = self.seasons.len() > 1;
         let has_row = !self.row_items().is_empty();
         let has_people = !self.chips().is_empty();
@@ -241,6 +371,12 @@ impl Screen for Detail {
     }
 
     fn hover(&mut self, h: Hot) -> bool {
+        if self.confirm.is_some() {
+            if h.row != 9 { return false; }
+            let ch = self.cbtn != h.col as usize;
+            self.cbtn = h.col as usize;
+            return ch;
+        }
         let (z, c) = match h.row { 0 => (Zone::Buttons, h.col as usize), 1 => (Zone::Seasons, h.col as usize), 3 => (Zone::People, h.col as usize), _ => (Zone::Row, h.col as usize) };
         let changed = self.zone != z || match z { Zone::Buttons => self.btn != c, Zone::Seasons => self.scol != c, Zone::Row => self.col != c, Zone::People => self.pcol != c };
         self.zone = z;
@@ -288,11 +424,28 @@ impl Screen for Detail {
                 }
                 Msg::Similar(v) => { self.focus = v.iter().map(|_| Anim::new(0.0, 14.0)).collect(); self.similar = v; }
                 Msg::Toggled => {}
+                Msg::CanManage(ok) => self.manage_ok = ok,
+                Msg::Preview(r) => if matches!(self.confirm, Some(Confirm::Loading)) {
+                    self.confirm = Some(match r { Ok(r) => Confirm::Ready(r), Err(e) => Confirm::Failed(e) });
+                    self.cbtn = 0;
+                },
+                Msg::Deleted(r) => match r {
+                    Ok(r) => {
+                        crate::log!("delete: done ({})", r.title);
+                        crate::jf::mark_deleted(&self.item.id);
+                        let free = r.volumes.first().map(|v| format!("  ·  {} free", feed::size(v.free + r.size))).unwrap_or_default();
+                        self.confirm = None;
+                        self.pending.push(Action::Toast(format!("Deleted {}{free}", r.title)));
+                        self.pending.push(Action::Pop);
+                    }
+                    Err(e) => { crate::log!("delete: failed: {e}"); self.confirm = Some(Confirm::Failed(e)); self.cbtn = 0; }
+                },
             }
         }
         let n = self.row_items().len();
         if self.col >= n && n > 0 { self.col = n - 1; }
-        let mut busy = self.appear.step(cx.dt) | self.backdrop.update(cx);
+        if self.confirm.is_none() { self.confirm_a.snap(0.0); }
+        let mut busy = self.appear.step(cx.dt) | self.backdrop.update(cx) | self.confirm_a.step(cx.dt) | self.confirm.is_some();
         let max_off = (n as f32 * (EW + GAP) - (1920.0 - PAD - 60.0)).max(0.0);
         self.sx.set(((self.col as f32 - 1.0).max(0.0) * (EW + GAP)).min(max_off));
         busy |= self.sx.step(cx.dt);
@@ -451,6 +604,11 @@ impl Screen for Detail {
             }
         }
         g.alpha = 1.0;
+        if self.confirm.is_some() {
+            // the dialog owns the pointer: nothing behind it is clickable
+            cx.hot.clear();
+            self.draw_confirm(g, cx);
+        }
     }
 }
 

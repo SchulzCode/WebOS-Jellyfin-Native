@@ -44,6 +44,15 @@ pub fn secure_data_dir() {
 }
 
 /// The server used last (pre-selected on the sign-in screen after a sign-out).
+/// Titles deleted from this TV in this session (feed.rs + detail page). Jellyfin can take a moment to forget them, so
+/// screens leave these out of whatever the server still returns.
+static DELETED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+pub fn mark_deleted(id: &str) { DELETED.lock().unwrap().push(id.to_string()); }
+pub fn is_deleted(it: &Item) -> bool {
+    let d = DELETED.lock().unwrap();
+    !d.is_empty() && (d.contains(&it.id) || it.series_id.as_ref().map_or(false, |s| d.contains(s)))
+}
+
 pub fn last_server() -> Option<String> { std::fs::read_to_string(format!("{DATA_DIR}/last-server")).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) }
 
 /// A server found on the network or checked by address.
@@ -210,6 +219,8 @@ pub struct Item {
     /// media source id -> thumbnail width -> layout
     pub trickplay: HashMap<String, HashMap<String, Trickplay>>,
     pub people: Vec<Person>,
+    /// this user may delete it (Jellyfin's own check; the actual delete goes through Sonarr/Radarr, see feed.rs)
+    pub can_delete: Option<bool>,
 }
 
 impl Item {
@@ -323,7 +334,7 @@ impl Client {
         Ok((r.items, r.total_record_count))
     }
     pub fn item(&self, id: &str) -> Result<Item, String> {
-        self.get(&format!("/Items/{id}?userId={}&fields={FIELDS},MediaSources,MediaStreams,People,Chapters,Trickplay", self.s.user_id))
+        self.get(&format!("/Items/{id}?userId={}&fields={FIELDS},MediaSources,MediaStreams,People,Chapters,Trickplay,CanDelete", self.s.user_id))
     }
     pub fn seasons(&self, series: &str) -> Result<Vec<Item>, String> {
         self.items(&format!("/Shows/{series}/Seasons?userId={}&fields={FIELDS}&{IMG}", self.s.user_id))

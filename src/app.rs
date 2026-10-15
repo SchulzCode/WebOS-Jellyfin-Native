@@ -31,8 +31,12 @@ const REPEAT_EVERY: Duration = Duration::from_millis(80);
 pub struct Prefs { pub sub_size: usize, pub subs_auto: bool, pub audio_lang: String, pub autoplay: bool, pub stats: bool, pub remember_tracks: bool,
     /// lip sync for Bluetooth headphones: how much earlier the sound is played. LG's pipeline already makes up for most
     /// of the Bluetooth delay; 25 ms was right by ear with AirPods Pro 2 (SBC - all this TV sends besides aptX).
-    pub bt_audio_lead_ms: i32 }
-impl Default for Prefs { fn default() -> Self { Prefs { sub_size: 1, subs_auto: true, audio_lang: String::new(), autoplay: true, stats: false, remember_tracks: true, bt_audio_lead_ms: 25 } } }
+    pub bt_audio_lead_ms: i32,
+    /// the "Downloading" row on Home (Sonarr/Radarr via Minimal Home's feed service, see feed.rs)
+    pub downloads: bool,
+    /// where that feed is; empty = the Jellyfin server's host, port 8091
+    pub feed_url: String }
+impl Default for Prefs { fn default() -> Self { Prefs { sub_size: 1, subs_auto: true, audio_lang: String::new(), autoplay: true, stats: false, remember_tracks: true, bt_audio_lead_ms: 25, downloads: true, feed_url: String::new() } } }
 
 static PREFS: OnceLock<Mutex<Prefs>> = OnceLock::new();
 fn prefs_cell() -> &'static Mutex<Prefs> {
@@ -431,7 +435,9 @@ impl App {
                     busy |= b;
                     if !matches!(a, Action::None) { self.pending_action = Some(a); }
                 } else if let Some(s) = self.stack.last_mut() {
-                    busy |= s.update(&mut cx);
+                    // behind a fully black idle screen nothing is visible: let animations (download cards) rest
+                    let hidden = self.idle.to > 0.5 && self.idle.v > 0.99;
+                    busy |= s.update(&mut cx) && !hidden;
                 }
             }
         }

@@ -1,17 +1,19 @@
 //! Home: the focused item's backdrop + text as a hero, a top tab bar, and rows below it
-//! (continue watching, next up, recently added per library, libraries).
+//! (continue watching, next up, what is downloading, recently added per library, libraries).
 use super::*;
 use crate::app::PlaySpec;
+use crate::feed::{self, Download};
+use crate::gfx::images::gray;
 use crate::jf::Item;
 use crate::net::Mailbox;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind { Wide, Poster, Library }
+enum Kind { Wide, Poster, Library, Download }
 
 struct Row { key: String, title: String, kind: Kind, items: Vec<Item>, col: usize, sx: Anim, focus: Vec<Anim> }
 
-enum Msg { Row(usize, Row), Done(Option<String>) }
+enum Msg { Row(usize, Row), Done(Option<String>), Downloads(Result<Vec<Download>, String>) }
 
 #[derive(Clone)]
 enum Tab { Home, Lib(Item), Search, Settings }
@@ -32,7 +34,17 @@ pub struct Home {
     error: Option<String>,
     loaded_at: Option<Instant>,
     appear: Anim,
+    /// the "Downloading" row (feed.rs): data, when it arrived, when to ask next, a request in flight, last error
+    dl: Vec<Download>,
+    dl_at: Instant,
+    dl_next: Instant,
+    dl_busy: bool,
+    dl_err: Option<String>,
+    /// the focused download shown as the hero (instead of `hero`)
+    hero_dl: Option<String>,
 }
+
+const DL_ORDER: usize = 2;
 
 const WIDE: (f32, f32) = (352.0, 198.0);
 const POSTER: (f32, f32) = (196.0, 294.0);
@@ -45,6 +57,7 @@ impl Home {
             mb: Mailbox::new(), rows: vec![], tabs: vec![("Home".into(), Tab::Home), ("Search".into(), Tab::Search), ("Settings".into(), Tab::Settings)],
             tab: 0, row: 0, sy: Anim::new(0.0, 9.0), tabs_focus: Anim::new(0.0, 12.0), backdrop: Backdrop::new(), hero: None,
             hero_a: Anim::new(0.0, 7.0), hero_pending: None, loading: true, error: None, loaded_at: None, appear: Anim::new(0.0, 3.5),
+            dl: vec![], dl_at: Instant::now(), dl_next: Instant::now(), dl_busy: false, dl_err: None, hero_dl: None,
         };
         h.appear.set(1.0);
         h.load(cx);
@@ -91,17 +104,55 @@ impl Home {
         });
     }
 
+    /// Ask the feed when it's time: every 15 s while something downloads, less often otherwise, rarely without a feed.
+    fn poll_downloads(&mut self, cx: &mut Cx) {
+        if self.dl_busy || Instant::now() < self.dl_next { return; }
+        let Some(c) = cx.client.as_ref() else { return };
+        let Some(url) = feed::url(&c.s.server) else {
+            // switched off in Settings: drop the row, look at the setting again in a while
+            if !self.dl.is_empty() { self.mb.tx.send(Msg::Downloads(Ok(vec![]))).ok(); }
+            self.dl_next = Instant::now() + Duration::from_secs(5);
+            return;
+        };
+        self.dl_busy = true;
+        let (agent, tx) = (c.agent.clone(), self.mb.tx.clone());
+        cx.pool.spawn(move || {
+            let _ = tx.send(Msg::Downloads(feed::fetch(&agent, &url)));
+            crate::net::wake();
+        });
+    }
+
+    fn put_row(&mut self, order: usize, mut row: Row) {
+        if let Some(pos) = self.rows.iter().position(|(_, r)| r.key == row.key) {
+            // refresh in place: keep the focused item focused if it is still there
+            let old = &self.rows[pos].1;
+            let keep = old.items.get(old.col).map(|i| i.id.clone());
+            row.col = keep.and_then(|id| row.items.iter().position(|i| i.id == id)).unwrap_or(old.col.min(row.items.len().saturating_sub(1)));
+            row.sx = old.sx;
+            self.rows[pos] = (order, row);
+        } else {
+            self.rows.push((order, row));
+            self.rows.sort_by_key(|(o, _)| *o);
+        }
+    }
+
+    fn focused_download(&self) -> Option<&Download> {
+        let r = self.cur()?;
+        if r.kind != Kind::Download { return None; }
+        self.dl.get(r.col)
+    }
+
     fn visible_rows(&self) -> Vec<usize> { (0..self.rows.len()).filter(|&i| !self.rows[i].1.items.is_empty()).collect() }
 
     fn cur(&self) -> Option<&Row> { let v = self.visible_rows(); v.get(self.row.max(0) as usize).map(|&i| &self.rows[i].1) }
 
     fn focused_item(&self) -> Option<Item> {
         let r = self.cur()?;
-        if r.kind == Kind::Library { return None; }
+        if matches!(r.kind, Kind::Library | Kind::Download) { return None; }
         r.items.get(r.col).cloned()
     }
 
-    fn row_h(k: Kind) -> f32 { match k { Kind::Wide | Kind::Library => 58.0 + WIDE.1 + 104.0, Kind::Poster => 58.0 + POSTER.1 + 96.0 } }
+    fn row_h(k: Kind) -> f32 { match k { Kind::Wide | Kind::Library | Kind::Download => 58.0 + WIDE.1 + 104.0, Kind::Poster => 58.0 + POSTER.1 + 96.0 } }
 
     fn open(&self, it: &Item, cx: &mut Cx) -> Action {
         if it.kind == "CollectionFolder" || it.collection_type.is_some() {
@@ -111,12 +162,25 @@ impl Home {
     }
 }
 
+/// Leave out titles deleted from this TV that the server still lists for a moment.
+fn drop_deleted(r: &mut Row) {
+    let keep: Vec<bool> = r.items.iter().map(|i| !crate::jf::is_deleted(i)).collect();
+    if keep.iter().all(|k| *k) { return; }
+    let mut k = keep.iter();
+    r.items.retain(|_| *k.next().unwrap());
+    let mut k = keep.iter();
+    r.focus.retain(|_| *k.next().unwrap());
+    r.col = r.col.min(r.items.len().saturating_sub(1));
+}
+
 impl Screen for Home {
     fn name(&self) -> &'static str { "home" }
 
     fn resumed(&mut self, cx: &mut Cx) {
         // back from a detail page or a film: progress changed, refresh (cheap, a few small requests)
         if self.loaded_at.map_or(true, |t| t.elapsed() > Duration::from_secs(3)) { self.load(cx); }
+        if self.dl_at.elapsed() > Duration::from_secs(5) { self.dl_next = Instant::now(); }
+        for (_, r) in self.rows.iter_mut() { if r.kind != Kind::Download { drop_deleted(r); } }
     }
 
     fn key(&mut self, k: Key, cx: &mut Cx) -> Action {
@@ -147,6 +211,13 @@ impl Screen for Home {
                         Tab::Search => Action::Push(Box::new(super::search::Search::new(cx))),
                         Tab::Settings => Action::Push(Box::new(super::settings::Settings::new(cx))),
                     };
+                }
+                if let Some(d) = self.focused_download() {
+                    return Action::Toast(match d.state.as_str() {
+                        "importing" => "Almost there - it's being added to your library".into(),
+                        "blocked" | "failed" | "warning" => "This download needs a look in Sonarr/Radarr".into(),
+                        _ => "Still downloading - it shows up in your library when it's done".into(),
+                    });
                 }
                 if let Some(r) = self.cur() { if let Some(it) = r.items.get(r.col).cloned() { return self.open(&it, cx); } }
             }
@@ -188,7 +259,34 @@ impl Screen for Home {
         let mut busy = false;
         for m in self.mb.drain() {
             match m {
+                Msg::Downloads(res) => {
+                    self.dl_busy = false;
+                    self.dl_at = Instant::now();
+                    let wait = match res {
+                        Ok(v) => {
+                            if self.dl_err.take().is_some() || (self.dl.is_empty() && !v.is_empty()) { crate::log!("downloads: {} from the feed", v.len()); }
+                            let wait = if v.iter().any(|d| d.active()) { 15 } else if v.is_empty() { 120 } else { 60 };
+                            let items = v.iter().map(|d| Item { id: format!("dl:{}", d.id), name: d.title.clone(), ..Default::default() }).collect::<Vec<_>>();
+                            self.dl = v;
+                            let row = Row { key: "downloads".into(), title: "Downloading".into(), kind: Kind::Download, focus: items.iter().map(|_| Anim::new(0.0, 14.0)).collect(), items, col: 0, sx: Anim::new(0.0, 10.0) };
+                            self.put_row(DL_ORDER, row);
+                            wait
+                        }
+                        Err(e) => {
+                            // no feed on this server (the usual case for most people): quietly look again much later
+                            if self.dl_err.as_deref() != Some(&e) { crate::log!("downloads: no feed ({e})"); }
+                            self.dl_err = Some(e);
+                            if !self.dl.is_empty() {
+                                self.dl.clear();
+                                self.put_row(DL_ORDER, Row { key: "downloads".into(), title: "Downloading".into(), kind: Kind::Download, focus: vec![], items: vec![], col: 0, sx: Anim::new(0.0, 10.0) });
+                            }
+                            300
+                        }
+                    };
+                    self.dl_next = Instant::now() + Duration::from_secs(wait);
+                }
                 Msg::Row(order, mut row) => {
+                    if row.kind != Kind::Download { drop_deleted(&mut row); }
                     if row.kind == Kind::Library {
                         // libraries also become tabs (Home · Movies · Shows · Search · Settings)
                         let mut tabs = vec![("Home".to_string(), Tab::Home)];
@@ -198,17 +296,7 @@ impl Screen for Home {
                         self.tabs = tabs;
                         self.tab = self.tab.min(self.tabs.len() - 1);
                     }
-                    if let Some(pos) = self.rows.iter().position(|(_, r)| r.key == row.key) {
-                        // refresh in place: keep the focused item focused if it is still there
-                        let old = &self.rows[pos].1;
-                        let keep = old.items.get(old.col).map(|i| i.id.clone());
-                        row.col = keep.and_then(|id| row.items.iter().position(|i| i.id == id)).unwrap_or(old.col.min(row.items.len().saturating_sub(1)));
-                        row.sx = old.sx;
-                        self.rows[pos] = (order, row);
-                    } else {
-                        self.rows.push((order, row));
-                        self.rows.sort_by_key(|(o, _)| *o);
-                    }
+                    self.put_row(order, row);
                 }
                 Msg::Done(e) => { self.loading = false; self.error = e; }
             }
@@ -250,6 +338,33 @@ impl Screen for Home {
                 }
             }
         }
+        // a focused download is the hero: its greyed-out fanart as the backdrop
+        let want_dl = self.focused_download().map(|d| d.id.clone());
+        if want_dl != self.hero_dl {
+            match self.focused_download() {
+                Some(d) => self.backdrop.set(gray(&d.fanart)),
+                None => {
+                    // back on a title row: its backdrop again (a different title gets its own from the code above)
+                    if let (Some(c), Some(it), Some(w)) = (cx.client, &self.hero, self.focused_item()) {
+                        if it.id == w.id { self.backdrop.set(c.backdrop(it, 1920)); }
+                    }
+                }
+            }
+            if want_dl.is_some() || self.hero_dl.is_some() { self.hero_a.snap(0.0); self.hero_a.set(1.0); }
+            self.hero_dl = want_dl;
+        }
+        if let Some(d) = self.focused_download() { cx.images.prefetch(&d.logo); }
+        // the download cards and hero are animated: keep drawing while they're on screen
+        if !self.dl.is_empty() {
+            let mut y = ROWS_TOP - self.sy.v;
+            for &ri in &vis {
+                let h = Self::row_h(self.rows[ri].1.kind);
+                if self.rows[ri].1.kind == Kind::Download && y < 1080.0 && y + h > 0.0 { busy = true; }
+                y += h;
+            }
+            busy |= self.hero_dl.is_some();
+        }
+        self.poll_downloads(cx);
         busy |= self.hero_a.step(cx.dt);
         busy |= self.backdrop.update(cx);
         busy |= self.appear.step(cx.dt);
@@ -287,7 +402,11 @@ impl Screen for Home {
         g.text_r(1920.0 - PAD, 44.0, 44.0, W::Medium, TEXT, &hhmm(0));
 
         // hero
-        if let Some(it) = self.hero.clone() {
+        let age = self.dl_at.elapsed().as_secs_f32();
+        if let Some(d) = self.focused_download().cloned() {
+            let ha = smooth(self.hero_a.v);
+            super::downloads::hero(g, cx, &d, age, PAD, ROWS_TOP - 74.0 - (1.0 - ha) * 12.0, ha);
+        } else if let Some(it) = self.hero.clone() {
             let ha = smooth(self.hero_a.v);
             let fade_up = (self.sy.v / 200.0).min(1.0) * 0.0;
             hero_text(g, cx, &c, &it, PAD, ROWS_TOP - 74.0 - (1.0 - ha) * 12.0, ha * (1.0 - fade_up), &status_of(&it));
@@ -324,6 +443,7 @@ impl Screen for Home {
                 let (w, ch) = if kind == Kind::Poster { POSTER } else { WIDE };
                 let top = y + 52.0;
                 let items = r.items.clone();
+                let dls = if kind == Kind::Download { self.dl.clone() } else { vec![] };
                 let (sx, col) = (r.sx.v, r.col);
                 let focus: Vec<f32> = r.focus.iter().map(|f| f.v).collect();
                 let first = ((sx / (w + GAP)).floor() as usize).saturating_sub(1);
@@ -338,6 +458,7 @@ impl Screen for Home {
                             wide_card(g, cx, &c, it, rect, f, &t, &s);
                         }
                         Kind::Poster => poster_card(g, cx, &c, it, rect, f, true),
+                        Kind::Download => if let Some(d) = dls.get(i) { super::downloads::card(g, cx, d, age, rect, f); },
                         Kind::Library => {
                             let rr = rect.scale_center(1.0 + 0.05 * f);
                             focus_ring(g, rr, 16.0, f);

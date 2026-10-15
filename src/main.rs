@@ -1,6 +1,7 @@
 //! Jellyfin Native: a native (Rust, GLES2, no browser) Jellyfin client for LG webOS TVs.
 //! Video is decoded by the TV's own media pipeline; see player/engine.rs.
 mod app;
+mod feed;
 mod gfx;
 mod jf;
 mod log;

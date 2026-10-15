@@ -47,7 +47,8 @@ it for the next sign-in.
 - No password is ever entered or stored: sign-in is Quick Connect only. The access token is kept in
   `/media/developer/jfnative/session.json`, readable by the app's own user only (the folder is `0700`); signing out
   in Settings deletes it.
-- The app talks only to your Jellyfin server. No analytics, no third-party requests. HTTPS certificates are verified
+- The app talks only to your Jellyfin server (and, for the optional "Downloading" row, port 8091 on the same host - see
+  below; off in Settings). No analytics, no third-party requests. HTTPS certificates are verified
   (self-signed certificates are not accepted); plain `http://` works for servers on your LAN.
 - Release builds contain no developer hooks. Crash dumps are disabled (`RLIMIT_CORE=0`), so a crash can't fill
   the TV's app storage.
@@ -58,12 +59,24 @@ it for the next sign-in.
 - **Sign-in with Quick Connect**: a code on the TV, approved in any signed-in Jellyfin client. The session
   is stored in `/media/developer/jfnative/session.json` (outside the app folder, so it survives reinstalls).
 - **Home**: hero backdrop + logo of the focused title, tabs (Home, each library, Search, Settings), and rows
-  for Continue watching, Next up, Recently added per library, and Your libraries.
+  for Continue watching, Next up, Downloading, Recently added per library, and Your libraries.
+- **Downloading** (optional): what Sonarr and Radarr are fetching right now, with progress and time left. The artwork is
+  greyed out and fills with colour as the download progresses; focused, it becomes the hero (greyed fanart, logo, status).
+  Season packs are one card. The data comes from Minimal Home's read-only feed service
+  ([WebOS-Minimal-Launcher](https://github.com/SchulzCode/WebOS-Minimal-Launcher) `server/launcher-feed`), so the TV never
+  holds the Sonarr/Radarr API keys. It is looked for at `http://<Jellyfin host>:8091/feed` (or `feed_url` in prefs.json);
+  without a feed the row never appears and the app asks again only every 5 minutes. Refreshed every 15 s while
+  something downloads, counting down in between.
 - **Libraries**: poster grid with A–Z / Recently added / Rating / Year sorting and an **Unwatched** filter, loaded page by page.
 - **Detail pages**: logo or title, metadata ("Ends at 21:01"), technical line (resolution, codec, audio,
   subtitle languages), Resume / From the start / Mark watched / Favourite. Shows get season tabs and an
   episode row. Films get "More like this". A **Genres & cast** row at the bottom opens a grid of every film/show of
   that genre or with that person. Items with several versions get a version button.
+- **Delete** (optional): films and whole series get a trash button for Jellyfin administrators when the server runs
+  Minimal Home's feed service with `ALLOW_DELETE=1`. A dialog shows what goes (seasons, files, size) and the free space
+  before and after; Cancel is focused first. The delete goes through Sonarr/Radarr (files included, and they stop
+  downloading it) - Jellyfin itself usually can't (read-only media) and Sonarr would just download it again. The
+  service checks the app's Jellyfin sign-in with Jellyfin before it deletes anything.
 - **Search**: an on-screen keyboard that works with the plain remote, with live results.
 - **Player**:
   - Direct play of H.264 / HEVC / VP9 / AV1. AAC / AC3 / E-AC3 / DTS go to the TV's decoder as they are.
@@ -102,7 +115,8 @@ it for the next sign-in.
     right everywhere, including Minimal Home.
   - The Home key releases the decoder at once; coming back resumes at the same spot.
 - **Settings**: subtitle size, subtitles (as in the Jellyfin account / off), audio language, remember
-  choices per series, autoplay, the technical-info overlay, and sign out (stored in `/media/developer/jfnative/prefs.json`).
+  choices per series, autoplay, the technical-info overlay, the Downloading row, and sign out; the media
+  disk's free space (from the feed service) (stored in `/media/developer/jfnative/prefs.json`).
 - **Launch parameters**: `{"itemId": "<id>", "play": true}` plays an item directly (or omit `play` to open
   its page). This is meant for a launcher card.
 
@@ -176,6 +190,7 @@ Development helpers (only in `DEV=1 scripts/deploy.sh` builds, never in releases
 | `src/player/` | `engine.rs` (demux → pipeline, image-subtitle decoding), `audio.rs` (decode + AC3 re-encode on the TV), `source.rs` (HTTP, attachment skipping), `mod.rs` (sessions, video plane) |
 | `src/native/smp.c` | the C seam to LG's StarfishMediaAPIs and the exported video window |
 | `src/jf.rs` | Jellyfin API + models |
+| `src/feed.rs` | the optional downloads feed (Sonarr/Radarr via Minimal Home's feed service); cards/hero in `ui/downloads.rs` |
 | `src/sys/` | SDL/FFmpeg/shim bindings |
 | `assets/fonts/` | Inter 4.1 (OFL), subset to Latin/Greek/Cyrillic; Japanese etc. comes from the TV's own fonts |
 

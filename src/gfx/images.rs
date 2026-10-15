@@ -1,5 +1,6 @@
 //! Remote images (Jellyfin posters, thumbs, backdrops): fetched + decoded on the pool, uploaded on the UI
 //! thread a few per frame, kept in an LRU within a GPU memory budget, faded in when they arrive.
+//! A `gray:` prefix on the address gives a greyed-out copy (download cards: what isn't there yet).
 use super::{Gfx, Texture};
 use crate::net::{self, Pool};
 use std::collections::HashMap;
@@ -20,6 +21,56 @@ pub struct Images {
     frame: u64,
     bytes: usize,
     budget: usize,
+}
+
+const GRAY: &str = "gray:";
+
+/// Decode to RGBA. Baseline JPEGs that store each colour in its own scan (Sonarr/Radarr write their resized pictures
+/// like that) come out of image 0.25's decoder (zune-jpeg 0.5.15) as green stripes, without an error - those go to
+/// jpeg-decoder instead.
+fn decode(buf: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    if split_scan_jpeg(buf) {
+        let mut d = jpeg_decoder::Decoder::new(std::io::Cursor::new(buf));
+        let px = d.decode().ok()?;
+        let info = d.info()?;
+        let rgba: Vec<u8> = match info.pixel_format {
+            jpeg_decoder::PixelFormat::RGB24 => px.chunks_exact(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+            jpeg_decoder::PixelFormat::L8 => px.iter().flat_map(|&l| [l, l, l, 255]).collect(),
+            _ => return None,
+        };
+        return Some((info.width as u32, info.height as u32, rgba));
+    }
+    let img = image::load_from_memory(buf).ok()?.to_rgba8();
+    Some((img.width(), img.height(), img.into_raw()))
+}
+
+/// A baseline JPEG whose first scan carries fewer components than the frame has (non-interleaved).
+fn split_scan_jpeg(d: &[u8]) -> bool {
+    if d.len() < 4 || d[0] != 0xFF || d[1] != 0xD8 { return false; }
+    let (mut i, mut frame) = (2usize, None);
+    while i + 4 <= d.len() && d[i] == 0xFF {
+        let (m, len) = (d[i + 1], u16::from_be_bytes([d[i + 2], d[i + 3]]) as usize);
+        match m {
+            0xC0 | 0xC1 => frame = d.get(i + 9).copied(),
+            0xC2 => return false, // progressive: many scans by design, decoded fine
+            0xDA => return matches!((frame, d.get(i + 4)), (Some(f), Some(&s)) if s < f),
+            _ => {}
+        }
+        i += 2 + len;
+    }
+    false
+}
+
+/// The `gray:` variant of an image address.
+pub fn gray(url: &str) -> String { if url.is_empty() { String::new() } else { format!("{GRAY}{url}") } }
+
+/// Greyscale, a little darker and flatter: reads as "not here yet" next to the colour version.
+fn desaturate(px: &mut [u8]) {
+    for p in px.chunks_exact_mut(4) {
+        let l = 0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32;
+        let v = (l * 0.72 + 14.0).min(255.0) as u8;
+        p[0] = v; p[1] = v; p[2] = v;
+    }
 }
 
 impl Images {
@@ -54,11 +105,13 @@ impl Images {
         let (tx, agent, url) = (self.tx.clone(), self.agent.clone(), url.to_string());
         self.pool.spawn(move || {
             let res = (|| {
-                let resp = agent.get(&url).call().ok()?;
+                let (src, gray) = match url.strip_prefix(GRAY) { Some(u) => (u, true), None => (url.as_str(), false) };
+                let resp = agent.get(src).call().ok()?;
                 let mut buf = Vec::with_capacity(256 * 1024);
                 std::io::Read::read_to_end(&mut resp.into_reader(), &mut buf).ok()?;
-                let img = image::load_from_memory(&buf).ok()?.to_rgba8();
-                Some((img.width(), img.height(), img.into_raw()))
+                let (w, h, mut px) = decode(&buf)?;
+                if gray { desaturate(&mut px); }
+                Some((w, h, px))
             })();
             if res.is_none() { crate::log!("image failed: {url}"); }
             let _ = tx.send((url, res));
