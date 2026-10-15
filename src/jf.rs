@@ -331,6 +331,10 @@ impl Client {
     pub fn episodes(&self, series: &str, season: &str) -> Result<Vec<Item>, String> {
         self.items(&format!("/Shows/{series}/Episodes?userId={}&seasonId={season}&fields={FIELDS},MediaSources&{IMG}", self.s.user_id))
     }
+    /// The series' episodes from `start` on, across seasons (what plays next after it).
+    pub fn episodes_from(&self, series: &str, start: &str) -> Result<Vec<Item>, String> {
+        self.items(&format!("/Shows/{series}/Episodes?userId={}&startItemId={start}&isMissing=false&limit=40&fields={FIELDS}&{IMG}", self.s.user_id))
+    }
     pub fn similar(&self, id: &str) -> Result<Vec<Item>, String> {
         self.items(&format!("/Items/{id}/Similar?userId={}&limit=16&fields={FIELDS}&{IMG}", self.s.user_id))
     }

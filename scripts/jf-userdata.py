@@ -17,5 +17,6 @@ elif cmd=='restore':
     saved=json.load(open(sys.argv[1]+'.userdata.json'))
     for i,u in saved.items():
         body={k:u.get(k) for k in ('PlaybackPositionTicks','Played','PlayCount','LastPlayedDate','IsFavorite') if k in u}
-        if 'LastPlayedDate' not in u: body['LastPlayedDate']=None
+        # Jellyfin ignores LastPlayedDate=null; "mark unplayed" is the only way to clear it (then the saved values go back on)
+        if not u.get('LastPlayedDate'): req('DELETE',f'/UserPlayedItems/{i}?userId={uid}'); body.pop('LastPlayedDate',None)
         req('POST',f'/UserItems/{i}/UserData?userId={uid}',body); print('restored',i,body)

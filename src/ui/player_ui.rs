@@ -11,7 +11,7 @@ use serde_json::json;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-enum Msg { Item(Result<Item, String>), Segments(Vec<Segment>), Srt(i32, Result<String, String>) }
+enum Msg { Item(Result<Item, String>), Segments(Vec<Segment>), Srt(i32, Result<String, String>), Queue(Vec<Item>) }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Method { Direct, Convert }
@@ -408,8 +408,9 @@ impl PlayerUi {
         Action::None
     }
 
-    /// The app's OLED idle screen may take over: nothing is moving (paused, an error, or not playing).
-    pub fn idle_ok(&self, player: &Player) -> bool { player.paused() || self.error.is_some() || self.done || (!player.active() && self.suspended_at.is_none()) }
+    /// The app's OLED idle screen may take over: nothing is moving (paused, an error, or finished). Loading the next
+    /// episode is not idle.
+    pub fn idle_ok(&self, player: &Player) -> bool { player.paused() || self.error.is_some() || self.done }
     /// What the idle screen says under its clock.
     pub fn idle_line(&self) -> String {
         let it = self.item.as_ref().unwrap_or(&self.spec.item);
@@ -491,6 +492,18 @@ impl PlayerUi {
             match m {
                 Msg::Item(Ok(it)) => {
                     self.ms = self.spec.source.as_ref().and_then(|id| it.media_sources.iter().find(|m| &m.id == id)).or(it.media_sources.first()).cloned();
+                    // an episode started without a queue (a launcher card, Continue watching, search) or the last one
+                    // of a season: the following episodes of the series, across seasons, so up next / autoplay go on
+                    if self.spec.queue.is_empty() && it.is_episode() {
+                        if let Some(series) = it.series_id.clone() {
+                            let (c, tx, id) = (self.c.clone(), self.mb.tx.clone(), it.id.clone());
+                            self.pool.spawn(move || {
+                                let mut v = c.episodes_from(&series, &id).unwrap_or_default();
+                                if v.first().map_or(false, |e| e.id == id) { v.remove(0); }
+                                let _ = tx.send(Msg::Queue(v)); crate::net::wake();
+                            });
+                        }
+                    }
                     self.item = Some(it);
                     if self.ms.is_none() { self.error = Some("This item has no playable file.".into()); continue; }
                     self.choose_tracks();
@@ -502,6 +515,7 @@ impl PlayerUi {
                 Msg::Segments(v) => { crate::log!("segments: {:?}", v.iter().map(|s| (&s.kind, s.start_ticks / TICKS_PER_SEC, s.end_ticks / TICKS_PER_SEC)).collect::<Vec<_>>()); self.segments = v; }
                 Msg::Srt(i, Ok(text)) => { if Some(i) == self.sub { self.cues = parse_srt(&text); crate::log!("subtitles: {} cues", self.cues.len()); } }
                 Msg::Srt(_, Err(e)) => crate::log!("subtitles: {e}"),
+                Msg::Queue(v) => { crate::log!("queue: {} more episodes", v.len()); if self.spec.queue.is_empty() { self.spec.queue = v; } }
             }
             busy = true;
         }

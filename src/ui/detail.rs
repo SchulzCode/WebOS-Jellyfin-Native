@@ -23,6 +23,8 @@ pub struct Detail {
     mb: Mailbox<Msg>,
     seasons: Vec<Item>,
     season: usize,
+    /// the season chip under the pointer (a click picks it; the remote's Left/Right pick at once)
+    scol: usize,
     episodes: Vec<Item>,
     episodes_of: String,
     similar: Vec<Item>,
@@ -54,7 +56,7 @@ const GAP: f32 = 26.0;
 impl Detail {
     pub fn new(item: Item, cx: &mut Cx) -> Detail {
         let mut d = Detail {
-            item, full: false, mb: Mailbox::new(), seasons: vec![], season: 0, episodes: vec![], episodes_of: String::new(), similar: vec![],
+            item, full: false, mb: Mailbox::new(), seasons: vec![], season: 0, scol: 0, episodes: vec![], episodes_of: String::new(), similar: vec![],
             zone: Zone::Buttons, btn: 0, col: 0, sx: Anim::new(0.0, 10.0), focus: vec![], bfocus: (0..5).map(|_| Anim::new(0.0, 14.0)).collect(),
             backdrop: Backdrop::new(), appear: Anim::new(0.0, 4.0), shown: None, shown_a: Anim::new(1.0, 7.0),
             version: 0, pcol: 0, px: Anim::new(0.0, 10.0), sy: Anim::new(0.0, 8.0),
@@ -182,6 +184,7 @@ impl Screen for Detail {
                     Zone::Row => if has_seasons { Zone::Seasons } else { Zone::Buttons },
                     _ => Zone::Buttons,
                 };
+                self.scol = self.season;
             }
             Key::Down => {
                 self.zone = match self.zone {
@@ -190,6 +193,7 @@ impl Screen for Detail {
                     Zone::Row => if has_people { Zone::People } else { Zone::Row },
                     Zone::People => Zone::People,
                 };
+                self.scol = self.season;
             }
             Key::Left | Key::Right => {
                 let d: i32 = if k == Key::Left { -1 } else { 1 };
@@ -198,6 +202,7 @@ impl Screen for Detail {
                     Zone::Seasons => {
                         let s = (self.season as i32 + d).clamp(0, self.seasons.len() as i32 - 1) as usize;
                         if s != self.season { self.season = s; self.col = 0; self.load_episodes(cx); }
+                        self.scol = s;
                     }
                     Zone::Row => self.col = (self.col as i32 + d).clamp(0, self.row_items().len() as i32 - 1) as usize,
                     Zone::People => self.pcol = (self.pcol as i32 + d).clamp(0, self.chips().len() as i32 - 1) as usize,
@@ -208,7 +213,10 @@ impl Screen for Detail {
                     let b = if k == Key::Ok { self.buttons()[self.btn.min(nb - 1)].0 } else { Btn::Play };
                     return self.act(b, cx);
                 }
-                Zone::Seasons => { self.zone = Zone::Row; }
+                Zone::Seasons => {
+                    if self.scol != self.season && self.scol < self.seasons.len() { self.season = self.scol; self.col = 0; self.load_episodes(cx); }
+                    else { self.zone = Zone::Row; }
+                }
                 Zone::People => {
                     return match self.chips().get(self.pcol).cloned() {
                         Some(Chip::Genre(g)) => Action::Push(Box::new(super::library::Library::browse(g.clone(), format!("genres={}", enc(&g)), cx))),
@@ -234,9 +242,9 @@ impl Screen for Detail {
 
     fn hover(&mut self, h: Hot) -> bool {
         let (z, c) = match h.row { 0 => (Zone::Buttons, h.col as usize), 1 => (Zone::Seasons, h.col as usize), 3 => (Zone::People, h.col as usize), _ => (Zone::Row, h.col as usize) };
-        let changed = self.zone != z || match z { Zone::Buttons => self.btn != c, Zone::Seasons => false, Zone::Row => self.col != c, Zone::People => self.pcol != c };
+        let changed = self.zone != z || match z { Zone::Buttons => self.btn != c, Zone::Seasons => self.scol != c, Zone::Row => self.col != c, Zone::People => self.pcol != c };
         self.zone = z;
-        match z { Zone::Buttons => self.btn = c, Zone::Seasons => {}, Zone::Row => self.col = c, Zone::People => self.pcol = c }
+        match z { Zone::Buttons => self.btn = c, Zone::Seasons => self.scol = c, Zone::Row => self.col = c, Zone::People => self.pcol = c }
         changed
     }
 
@@ -266,6 +274,7 @@ impl Screen for Detail {
                     // start on the season of this episode, or the first season with something unwatched
                     self.season = if self.item.is_episode() { v.iter().position(|s| Some(&s.id) == self.item.season_id.as_ref()).unwrap_or(0) }
                         else { v.iter().position(|s| s.user_data.as_ref().and_then(|u| u.unplayed_item_count).unwrap_or(0) > 0).unwrap_or(0) };
+                    self.scol = self.season;
                     self.seasons = v;
                     self.load_episodes(cx);
                 }
@@ -377,7 +386,7 @@ impl Screen for Detail {
                 let mut sx = PAD;
                 for (i, s) in self.seasons.iter().enumerate() {
                     let sel = i == self.season;
-                    let f = if sel && self.zone == Zone::Seasons { 1.0 } else { 0.0 };
+                    let f = if i == self.scol && self.zone == Zone::Seasons { 1.0 } else { 0.0 };
                     let w = g.text.measure(&s.name, 22.0, W::Semi, 0.0) + 36.0;
                     let r = Rect::new(sx, ry, w, 46.0);
                     g.rect(r, if f > 0.0 { Color(1.0, 1.0, 1.0, 1.0) } else if sel { SURFACE_HI } else { Color(0.0, 0.0, 0.0, 0.0) }, 23.0);

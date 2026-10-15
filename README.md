@@ -51,7 +51,7 @@ it for the next sign-in.
   (self-signed certificates are not accepted); plain `http://` works for servers on your LAN.
 - Release builds contain no developer hooks. Crash dumps are disabled (`RLIMIT_CORE=0`), so a crash can't fill
   the TV's app storage.
-- The log `/tmp/jfnative.log` (cleared at every TV boot) is readable by the app only.
+- The log `/tmp/jfnative.log` (the previous run: `/tmp/jfnative.log.1`; cleared at every TV boot) is readable by the app only.
 
 ## What it does
 
@@ -87,11 +87,14 @@ it for the next sign-in.
   - **Trickplay** thumbnails above the seek time when the server has generated them (off in this library).
   - **Track memory**: audio/subtitle picks are remembered per series by language/title (`tracks.json`) and
     carry over to the next episode; otherwise the server's defaults, which follow the Jellyfin account settings.
-  - **OLED care**: after 3 min paused the OSD goes and the picture dims nearly to black; any button wakes it.
+  - **OLED care**: own idle screen (true black + a dim clock that moves every minute) after 2 min without input in the
+    menus or 3 min paused; a playing video never counts as idle. 20 minutes later the app closes. Minimal Home's helper
+    turns LG's screensaver off while the app is in front, so there is only one.
   - **Pointer**: the control row (−10 s, play/pause, +10 s, tracks, chapter), the progress bar (click = seek),
     skip intro, up next and the track menu are clickable.
   - **Image subtitles (PGS/DVD), decoded on the TV** with its own libavcodec. No server burn-in.
-  - Skip intro/recap (Jellyfin media segments), and Up next with a 10 s countdown and autoplay.
+  - Skip intro/recap (Jellyfin media segments), and Up next with a 10 s countdown and autoplay. The queue is the rest of the
+    series across seasons, however the episode was started (detail page, Continue watching, search, a launcher card).
   - Progress reported to Jellyfin (start / every 10 s / pause / stop), so Continue watching stays
     right everywhere, including Minimal Home.
   - The Home key releases the decoder at once; coming back resumes at the same spot.
@@ -157,7 +160,7 @@ Development helpers (only in `DEV=1 scripts/deploy.sh` builds, never in releases
 - `scripts/shot out.png [w h]` captures the TV screen (the UI; video isn't captured).
 - `scripts/keys "D R OK"` plays remote presses into the running app while `/media/developer/jfnative/dev-keys-enabled`
   exists. Keys: `U D L R OK B PLAY PAUSE FF RW STOP INFO CHU CHD`, single lowercase letters, `click:x:y` / `move:x:y`.
-- The log is `/tmp/jfnative.log` on the TV. It records frame timing every 2 s while drawing (`fps …`) and any
+- The log is `/tmp/jfnative.log` on the TV (previous run: `.log.1`). It records frame timing every 2 s while drawing (`fps …`) and any
   iteration over 60 ms (`slow: …`). Creating `/media/developer/jfnative/gpu-timing` adds a `glFinish` so "submit" shows GPU time.
 
 ## Layout

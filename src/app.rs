@@ -16,10 +16,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 /// OLED care: idle screen after this long without input in the menus (LG's screensaver never starts over this app's
-/// menus - tested) / with a paused video (there LG's own screensaver takes over after ~3 min, so this is the fallback);
-/// the app closes after IDLE_QUIT more and the launcher (idle screen, then panel off) takes over.
+/// menus - tested) / with a paused video (LG's own screensaver would start there after ~3 min; Minimal Home's helper
+/// switches it off while this app is in front, so this is the only one); the app closes after IDLE_QUIT more and the
+/// launcher (idle screen, then panel off) takes over. A playing video counts as activity.
 const IDLE_MENU: Duration = Duration::from_secs(120);
-const IDLE_PAUSED: Duration = Duration::from_secs(300);
+const IDLE_PAUSED: Duration = Duration::from_secs(180);
 const IDLE_QUIT: Duration = Duration::from_secs(20 * 60);
 
 // ---- preferences ----
@@ -371,6 +372,8 @@ impl App {
         if !self.background { return; }
         self.background = false;
         crate::log!("lifecycle: foreground");
+        // whatever brought us back (the key that ended LG's screensaver, a launch) counts as input: no idle screen right away
+        self.last_input = Instant::now();
         if let Some(p) = self.pui.as_mut() { p.resume_after_background(&mut self.player); }
         let t = self.t0.elapsed().as_secs_f32();
         let mut cx = Self::cx(&mut self.images, &self.client, &self.pool, &mut self.hot, 0.0, t);
@@ -401,12 +404,16 @@ impl App {
         let playing = self.pui.is_some();
         {
             let mut cx = Self::cx(&mut self.images, &self.client, &self.pool, &mut self.hot, dt, t);
-            if let Some(p) = self.pui.as_mut() {
-                let (b, a) = p.update(&mut self.player, &mut cx);
-                busy |= b;
-                if !matches!(a, Action::None) { self.pending_action = Some(a); }
-            } else if let Some(s) = self.stack.last_mut() {
-                busy |= s.update(&mut cx);
+            // never in the background: a pending seek, up-next autoplay or a late item would start a pipeline
+            // (and play) while another app or LG's screensaver is in front
+            if !self.background {
+                if let Some(p) = self.pui.as_mut() {
+                    let (b, a) = p.update(&mut self.player, &mut cx);
+                    busy |= b;
+                    if !matches!(a, Action::None) { self.pending_action = Some(a); }
+                } else if let Some(s) = self.stack.last_mut() {
+                    busy |= s.update(&mut cx);
+                }
             }
         }
         if let Some(a) = self.pending_action.take() { self.act(a); busy = true; }
@@ -417,6 +424,8 @@ impl App {
         if clock != self.last_clock { self.last_clock = clock; busy = true; }
         // OLED idle screen: menus after IDLE_MENU, a paused/failed player after IDLE_PAUSED; after IDLE_QUIT more the app
         // closes, so the launcher (its own idle screen, then panel off) takes over
+        // a video playing (or loading) is activity: without this, a binge without key presses was closed between episodes
+        if self.pui.as_ref().map_or(false, |p| !p.idle_ok(&self.player)) { self.last_input = now; }
         let allowed = self.pui.as_ref().map_or(true, |p| p.idle_ok(&self.player)) && !self.background;
         let limit = if self.pui.is_some() && self.player.paused() { IDLE_PAUSED } else { IDLE_MENU };
         let idle_for = self.last_input.elapsed();
