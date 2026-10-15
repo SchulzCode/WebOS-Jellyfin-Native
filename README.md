@@ -47,9 +47,11 @@ it for the next sign-in.
 - No password is ever entered or stored: sign-in is Quick Connect only. The access token is kept in
   `/media/developer/jfnative/session.json`, readable by the app's own user only (the folder is `0700`); signing out
   in Settings deletes it.
-- The app talks only to your Jellyfin server (and, for the optional "Downloading" row, port 8091 on the same host - see
-  below; off in Settings). No analytics, no third-party requests. HTTPS certificates are verified
+- The app talks only to your Jellyfin server and, if you run it, the optional [server helper](#server-helper-optional)
+  on the same host (port 8091). No analytics, no third-party requests. HTTPS certificates are verified
   (self-signed certificates are not accepted); plain `http://` works for servers on your LAN.
+- Deleting a title is the only time the app's Jellyfin sign-in leaves for anything but Jellyfin: it goes to the server
+  helper, which checks it with Jellyfin. The helper speaks plain HTTP on your LAN.
 - Release builds contain no developer hooks. Crash dumps are disabled (`RLIMIT_CORE=0`), so a crash can't fill
   the TV's app storage.
 - The log `/tmp/jfnative.log` (the previous run: `/tmp/jfnative.log.1`; cleared at every TV boot) is readable by the app only.
@@ -60,23 +62,21 @@ it for the next sign-in.
   is stored in `/media/developer/jfnative/session.json` (outside the app folder, so it survives reinstalls).
 - **Home**: hero backdrop + logo of the focused title, tabs (Home, each library, Search, Settings), and rows
   for Continue watching, Next up, Downloading, Recently added per library, and Your libraries.
-- **Downloading** (optional): what Sonarr and Radarr are fetching right now, with progress and time left. The artwork is
-  greyed out and fills with colour as the download progresses; focused, it becomes the hero (greyed fanart, logo, status).
-  Season packs are one card. The data comes from Minimal Home's read-only feed service
-  ([WebOS-Minimal-Launcher](https://github.com/SchulzCode/WebOS-Minimal-Launcher) `server/launcher-feed`), so the TV never
-  holds the Sonarr/Radarr API keys. It is looked for at `http://<Jellyfin host>:8091/feed` (or `feed_url` in prefs.json);
-  without a feed the row never appears and the app asks again only every 5 minutes. Refreshed every 15 s while
-  something downloads, counting down in between.
+- **Downloading** (needs the [server helper](#server-helper-optional)): what Sonarr and Radarr are fetching right now,
+  with progress and time left that count down live. The artwork is greyed out and fills with colour from the left as
+  the download progresses, with an arrow dropping into a tray; focused, the download becomes the hero (greyed fanart,
+  logo, status, overview). A season pack is one card; queued, paused, stalled and problem downloads say so. Refreshed
+  every 15 s while something downloads. Settings → "Show what's downloading" switches the row off.
 - **Libraries**: poster grid with A–Z / Recently added / Rating / Year sorting and an **Unwatched** filter, loaded page by page.
 - **Detail pages**: logo or title, metadata ("Ends at 21:01"), technical line (resolution, codec, audio,
   subtitle languages), Resume / From the start / Mark watched / Favourite. Shows get season tabs and an
   episode row. Films get "More like this". A **Genres & cast** row at the bottom opens a grid of every film/show of
   that genre or with that person. Items with several versions get a version button.
-- **Delete** (optional): films and whole series get a trash button for Jellyfin administrators when the server runs
-  Minimal Home's feed service with `ALLOW_DELETE=1`. A dialog shows what goes (seasons, files, size) and the free space
-  before and after; Cancel is focused first. The delete goes through Sonarr/Radarr (files included, and they stop
-  downloading it) - Jellyfin itself usually can't (read-only media) and Sonarr would just download it again. The
-  service checks the app's Jellyfin sign-in with Jellyfin before it deletes anything.
+- **Delete** (needs the [server helper](#server-helper-optional) with deleting switched on): films and whole series get
+  a trash button for Jellyfin administrators. The confirmation names the title exactly as Sonarr/Radarr will delete it,
+  what goes (seasons, episode files, size) and the free space before and after, with the freed part marked on the disk
+  bar; Cancel is focused first. The delete goes through Sonarr/Radarr (files included, and they stop downloading it),
+  then the title disappears from Home, the libraries and search right away.
 - **Search**: an on-screen keyboard that works with the plain remote, with live results.
 - **Player**:
   - Direct play of H.264 / HEVC / VP9 / AV1. AAC / AC3 / E-AC3 / DTS go to the TV's decoder as they are.
@@ -97,7 +97,7 @@ it for the next sign-in.
     shows frames only from the target (`ptsToDecode`, ~0.1 s per second skipped). Seeks are in place (same
     connection and demuxer, new LG pipeline): ~0.65 s.
   - **Chapters** (from the server): CH+/CH− jump, listed in the ▲ menu, marked on the progress bar.
-  - **Trickplay** thumbnails above the seek time when the server has generated them (off in this library).
+  - **Trickplay** thumbnails above the seek time when the server has generated them.
   - **Track memory**: audio/subtitle picks are remembered per series by language/title (`tracks.json`) and
     carry over to the next episode; otherwise the server's defaults, which follow the Jellyfin account settings.
   - **OLED care**: own idle screen (true black + a dim clock that moves every minute) after 2 min without input in the
@@ -114,9 +114,10 @@ it for the next sign-in.
   - Progress reported to Jellyfin (start / every 10 s / pause / stop), so Continue watching stays
     right everywhere, including Minimal Home.
   - The Home key releases the decoder at once; coming back resumes at the same spot.
-- **Settings**: subtitle size, subtitles (as in the Jellyfin account / off), audio language, remember
-  choices per series, autoplay, the technical-info overlay, the Downloading row, and sign out; the media
-  disk's free space (from the feed service) (stored in `/media/developer/jfnative/prefs.json`).
+- **Settings**: subtitle size, subtitles (as in the Jellyfin account / off), audio language, remember choices per
+  series, autoplay, the technical-info overlay, the Downloading row, and sign out (stored in
+  `/media/developer/jfnative/prefs.json`). With the server helper, it also shows the **media storage**: free space,
+  used/total and a bar per disk (red above 90 %).
 - **Launch parameters**: `{"itemId": "<id>", "play": true}` plays an item directly (or omit `play` to open
   its page). This is meant for a launcher card.
 
@@ -128,8 +129,25 @@ resident. When nothing moves, nothing is drawn; while something animates, frames
 with ~2 ms of CPU per frame. The GPU (~12–15 ms per 1080p frame) is the real limit, so the full-screen colour washes
 and backdrop gradients are baked into small textures instead of being drawn as blurred shapes.
 
+Images are decoded on the TV with the `image` crate; baseline JPEGs that store each colour in its own scan (Sonarr and
+Radarr write their resized artwork like that) go to `jpeg-decoder` instead, because `image`'s zune-jpeg turns them
+into green stripes.
+
 Remote keys: LG's SDL delivers the remote's buttons as scancode 1 with the real code in `sym`
 (arrows 79–82, OK 40, Back 482, …); `ui::map_key` handles both that and normal keyboards.
+
+## Server helper (optional)
+
+The Downloading row, the media storage panel and deleting come from a small service that runs next to Sonarr and
+Radarr: `server/launcher-feed` in [Minimal Home](https://github.com/SchulzCode/WebOS-Minimal-Launcher) (one Docker
+container; setup and details in its README). The TV never holds the Sonarr/Radarr API keys - the service has them.
+
+- The app looks for it at `http://<Jellyfin host>:8091`; set `"feed_url": "http://<host>:8091"` in
+  `/media/developer/jfnative/prefs.json` if it runs elsewhere. Without it nothing extra appears, and the app asks again
+  only every 5 minutes.
+- Deleting is off unless the service runs with `ALLOW_DELETE=1`; the trash button only appears when the service says
+  it is on and Jellyfin says you may delete. The service acts only for Jellyfin administrators (it checks the app's
+  sign-in with Jellyfin) and deletes only the Sonarr/Radarr entry the confirmation showed.
 
 ## How playback works
 
@@ -190,7 +208,7 @@ Development helpers (only in `DEV=1 scripts/deploy.sh` builds, never in releases
 | `src/player/` | `engine.rs` (demux → pipeline, image-subtitle decoding), `audio.rs` (decode + AC3 re-encode on the TV), `source.rs` (HTTP, attachment skipping), `mod.rs` (sessions, video plane) |
 | `src/native/smp.c` | the C seam to LG's StarfishMediaAPIs and the exported video window |
 | `src/jf.rs` | Jellyfin API + models |
-| `src/feed.rs` | the optional downloads feed (Sonarr/Radarr via Minimal Home's feed service); cards/hero in `ui/downloads.rs` |
+| `src/feed.rs` | the optional server helper: downloads, media storage, delete; download cards/hero in `ui/downloads.rs` |
 | `src/sys/` | SDL/FFmpeg/shim bindings |
 | `assets/fonts/` | Inter 4.1 (OFL), subset to Latin/Greek/Cyrillic; Japanese etc. comes from the TV's own fonts |
 
@@ -206,8 +224,7 @@ are included. `assets/fonts/` is Inter (SIL Open Font License, see `assets/fonts
 - The Magic Remote pointer was tested with injected events (`scripts/keys "click:x:y"`), not the physical remote.
 - Errors: unreachable server → Home says so and retries every 15 s (OK retries now); the player offers OK = try
   again; a rejected token (HTTP 401) sends the app back to sign-in.
-- No Dolby Vision metadata or Atmos declaration yet (HDR10/HLG direct play should work; untested — the
-  library is all SDR).
+- No Dolby Vision metadata or Atmos declaration yet (HDR10/HLG direct play should work but is untested).
 - Image subtitles are not available while the server converts the stream. That now only happens as the
   fallback when the TV refuses the video.
 - One user per sign-in (no profile picker).
