@@ -101,8 +101,6 @@ pub struct App {
     toast: Option<Toast>,
     cursor: Option<(f32, f32, Instant)>,
     launch_params: serde_json::Value,
-    /// Started from a launcher card to play one item: leaving the player closes the app (back to the launcher).
-    exit_after_play: bool,
     /// OLED care (LG's own screensaver never starts over this native app - tested): idle screen after a while without input
     last_input: Instant,
     idle: ui::Anim,
@@ -142,7 +140,7 @@ impl App {
             let mut app = App {
                 win, g: Gfx::new(gl, 1920.0, 1080.0), images: Images::new(agent.clone()), pool: Arc::new(Pool::new(4, "net")), agent: agent.clone(),
                 client: None, stack: vec![], player: Player::new(agent), pui: None, hot: vec![], t0: Instant::now(), last: Instant::now(),
-                dirty: true, toast: None, cursor: None, launch_params: launch, exit_after_play: false, last_input: Instant::now(), idle: ui::Anim::new(0.0, 0.7), background: false, quit: false, last_clock: String::new(), pending_action: None, stats: FrameStats::default(), animating: false, last_repeat: Instant::now(), held_woke: false,
+                dirty: true, toast: None, cursor: None, launch_params: launch, last_input: Instant::now(), idle: ui::Anim::new(0.0, 0.7), background: false, quit: false, last_clock: String::new(), pending_action: None, stats: FrameStats::default(), animating: false, last_repeat: Instant::now(), held_woke: false,
                 dev_keys: cfg!(feature = "dev") && std::path::Path::new(&format!("{}/dev-keys-enabled", crate::jf::DATA_DIR)).exists(),
                 gpu_timing: cfg!(feature = "dev") && std::path::Path::new(&format!("{}/gpu-timing", crate::jf::DATA_DIR)).exists(),
             };
@@ -182,18 +180,16 @@ impl App {
     }
 
     /// Launch parameters: {"itemId": "...", "play": true} opens (and plays) an item - e.g. from Minimal Home.
+    /// The item's page goes on the stack under the player, so Back walks player -> item -> Home like inside the app.
     fn handle_launch(&mut self) {
         let p = self.launch_params.get("parameters").cloned().unwrap_or_default();
         let Some(id) = p.get("itemId").and_then(|v| v.as_str()).map(|s| s.to_string()) else { return };
         let play = p.get("play").and_then(|v| v.as_bool()).unwrap_or(false);
         crate::log!("launch: item {id} play={play}");
         let item = Item { id, ..Default::default() };
-        if play { self.exit_after_play = true; self.act(Action::Play(PlaySpec::resume(item))); }
-        else {
-            let mut cx = Self::cx(&mut self.images, &self.client, &self.pool, &mut self.hot, 0.0, 0.0);
-            let d = ui::detail::Detail::new(item, &mut cx);
-            self.stack.push(Box::new(d));
-        }
+        let mut cx = Self::cx(&mut self.images, &self.client, &self.pool, &mut self.hot, 0.0, 0.0);
+        self.stack.push(Box::new(ui::detail::Detail::new(item.clone(), &mut cx)));
+        if play { self.act(Action::Play(PlaySpec::resume(item))); }
     }
 
     fn act(&mut self, a: Action) {
@@ -234,7 +230,6 @@ impl App {
     fn close_player(&mut self, dt: f32, t: f32) {
         let Some(mut done) = self.pui.take() else { return };
         done.on_exit(&self.client);
-        if self.exit_after_play { crate::log!("launch: player closed, exiting to the launcher"); self.quit = true; return; }
         let mut cx = Self::cx(&mut self.images, &self.client, &self.pool, &mut self.hot, dt, t);
         if let Some(s) = self.stack.last_mut() { s.resumed(&mut cx); }
     }

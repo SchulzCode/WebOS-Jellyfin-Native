@@ -1,6 +1,6 @@
 {
   "id": "tld.my.jfnative",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "vendor": "me",
   "type": "native",
   "main": "jfnative",
@@ -9,6 +9,7 @@
   "largeIcon": "largeIcon.png",
   "iconColor": "#07080c",
   "bgColor": "#07080c",
+  "splashBackground": "splash.png",
   "nativeLifeCycleInterfaceVersion": 2,
   "handlesRelaunch": false,
   "transparent": true,

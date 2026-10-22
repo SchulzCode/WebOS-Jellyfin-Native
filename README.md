@@ -119,7 +119,8 @@ it for the next sign-in.
   `/media/developer/jfnative/prefs.json`). With the server helper, it also shows the **media storage**: free space,
   used/total and a bar per disk (red above 90 %).
 - **Launch parameters**: `{"itemId": "<id>", "play": true}` plays an item directly (or omit `play` to open
-  its page). This is meant for a launcher card.
+  its page). This is meant for a launcher card. The item's page sits under the player, so Back goes player -> item ->
+  Home -> launcher, as if it had been started inside the app.
 
 Measured on the TV: UI ready **0.3 s** after launch; first picture **1.0–2.0 s** after pressing play for direct
 play, including audio re-encoded on the TV; a skip shows the new picture after ~1.1 s. While playing
