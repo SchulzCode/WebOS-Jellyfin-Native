@@ -93,6 +93,9 @@ it for the next sign-in.
   - Audio and subtitle menu (▲).
   - Text subtitles: embedded SRT/ASS/WebVTT are **demuxed on the TV** from the stream (all tracks at once, instant
     switching, ASS tags stripped locally); external files and server conversions use the server's SRT.
+  - Subtitles follow a smooth picture clock (LG's pipeline reports the frame position only every ~200 ms; the app
+    counts forward in between), and **Subtitle timing** in the ▲ menu shifts them in 50 ms steps (◀ ▶, remembered;
+    default 100 ms later).
   - **Exact seeking**: when the keyframe is more than 2.5 s before the target, the pipeline decodes through and
     shows frames only from the target (`ptsToDecode`, ~0.1 s per second skipped). Seeks are in place (same
     connection and demuxer, new LG pipeline): ~0.65 s.

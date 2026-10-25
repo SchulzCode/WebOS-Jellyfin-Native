@@ -32,11 +32,14 @@ pub struct Prefs { pub sub_size: usize, pub subs_auto: bool, pub audio_lang: Str
     /// lip sync for Bluetooth headphones: how much earlier the sound is played. LG's pipeline already makes up for most
     /// of the Bluetooth delay; 25 ms was right by ear with AirPods Pro 2 (SBC - all this TV sends besides aptX).
     pub bt_audio_lead_ms: i32,
+    /// subtitles are shown this much later than their own timing (negative = earlier), set by eye in the player's ▲ menu.
+    /// 100 ms keeps them where they were on average before the smooth subtitle clock (0.3.9).
+    pub sub_delay_ms: i32,
     /// the "Downloading" row on Home (Sonarr/Radarr via Minimal Home's feed service, see feed.rs)
     pub downloads: bool,
     /// where that feed is; empty = the Jellyfin server's host, port 8091
     pub feed_url: String }
-impl Default for Prefs { fn default() -> Self { Prefs { sub_size: 1, subs_auto: true, audio_lang: String::new(), autoplay: true, stats: false, remember_tracks: true, bt_audio_lead_ms: 25, downloads: true, feed_url: String::new() } } }
+impl Default for Prefs { fn default() -> Self { Prefs { sub_size: 1, subs_auto: true, audio_lang: String::new(), autoplay: true, stats: false, remember_tracks: true, bt_audio_lead_ms: 25, sub_delay_ms: 100, downloads: true, feed_url: String::new() } } }
 
 static PREFS: OnceLock<Mutex<Prefs>> = OnceLock::new();
 fn prefs_cell() -> &'static Mutex<Prefs> {

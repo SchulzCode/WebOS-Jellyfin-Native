@@ -123,11 +123,15 @@ impl Download {
 
     pub fn active(&self) -> bool { matches!(self.state.as_str(), "downloading" | "queued") }
 
-    /// "7 % · 12 min left", "Queued", "Adding to your library", ...
+    /// Just grabbed: the download has no numbers yet (the torrent is still fetching its file list / finding peers).
+    pub fn starting(&self) -> bool { self.state == "downloading" && self.eta.is_none() && self.progress < 0.005 }
+
+    /// "7 % · 12 min left", "Starting", "Queued", "Adding to your library", ...
     pub fn status_line(&self, age: f32) -> String {
         let (p, left) = self.live(age);
         let pct = format!("{} %", (p * 100.0).floor() as i32);
         match self.state.as_str() {
+            "downloading" if self.starting() => "Starting".into(),
             "downloading" => match left { Some(s) if s > 0.0 => format!("{pct}  ·  {} left", duration(s)), _ => pct },
             "queued" => "Waiting to start".into(),
             "paused" => format!("{pct}  ·  paused"),
@@ -143,6 +147,7 @@ impl Download {
     /// The short word for the hero pill.
     pub fn pill(&self) -> &'static str {
         match self.state.as_str() {
+            "downloading" if self.starting() => "Starting",
             "downloading" => "Downloading", "queued" => "Queued", "paused" => "Paused", "stalled" => "Stalled",
             "importing" => "Almost ready", "blocked" | "failed" | "warning" => "Problem", _ => "Download",
         }

@@ -12,6 +12,9 @@ use std::ffi::CString;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::sync::Arc;
 
+/// how far clock_ns carries the position past the pipeline's last report (they come every ~200 ms; more = it stalled)
+const CLOCK_CARRY_NS: i64 = 300_000_000;
+
 /// Is the TV's sound going to Bluetooth headphones/speakers right now? LG's btaudiosrc keeps an ALSA capture of the
 /// TV's mix open while it streams A2DP (measured on the B4: card0 pcm10c, state RUNNING, owner btaudiosrc). Readable
 /// from the app jail; a few small /proc reads.
@@ -142,6 +145,20 @@ impl Player {
         match &self.cur {
             Some(s) if s.shared.frames.load(Ordering::Relaxed) > 0 => s.shared.position_ns.load(Ordering::Relaxed),
             _ => self.last_pos,
+        }
+    }
+
+    /// Where the picture is right now, for subtitles. The pipeline reports the frame position only about 5 times a
+    /// second (measured: every ~200 ms), so subtitles timed on position_ns came 0-200 ms late, a different amount each
+    /// line. While playing, carry it forward by the time since the last report (at most CLOCK_CARRY).
+    pub fn clock_ns(&self) -> i64 {
+        let pos = self.position_ns();
+        match &self.cur {
+            Some(s) if !self.paused && s.shared.phase() == Phase::Playing && !s.shared.seeking.load(Ordering::Acquire) && s.shared.frames.load(Ordering::Relaxed) > 0 => {
+                let since = s.shared.last_frame_at.lock().unwrap().map_or(0, |t| t.elapsed().as_nanos() as i64);
+                pos + since.min(CLOCK_CARRY_NS)
+            }
+            _ => pos,
         }
     }
 

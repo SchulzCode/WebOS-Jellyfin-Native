@@ -71,6 +71,9 @@ pub struct PlayerUi {
 /// Lip-sync steps and range for Bluetooth headphones, in ms.
 const LEAD_STEP: i32 = 25;
 const LEAD_MAX: i32 = 500;
+/// subtitle timing (prefs.sub_delay_ms): steps and range, ms
+const SUB_DELAY_STEP: i32 = 50;
+const SUB_DELAY_MAX: i32 = 1000;
 
 // ---- remembered track choices, per series (by language/title, so they carry over to the next episode)
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default, Debug)]
@@ -195,6 +198,11 @@ impl PlayerUi {
     /// -1 = off; 'c' chapter number).
     fn entries(&self) -> Vec<(String, Option<(char, i32)>)> {
         let mut v = menu_entries(self.ms.as_ref());
+        if self.sub.is_some() {
+            let ms = prefs().sub_delay_ms;
+            v.push(("Subtitle timing".into(), None));
+            v.push((match ms { 0 => "As in the file   ◀ ▶".into(), m if m > 0 => format!("{m} ms later   ◀ ▶"), m => format!("{} ms earlier   ◀ ▶", -m) }, Some(('t', 0))));
+        }
         if self.bt {
             let ms = prefs().bt_audio_lead_ms;
             v.push(("Bluetooth lip sync".into(), None));
@@ -254,6 +262,9 @@ impl PlayerUi {
         });
         self.load_text_subs();
     }
+
+    /// The position subtitles are timed on: the smooth picture clock, minus the subtitle timing setting.
+    fn sub_clock(&self, player: &Player) -> i64 { player.clock_ns() - prefs().sub_delay_ms.clamp(-SUB_DELAY_MAX, SUB_DELAY_MAX) as i64 * 1_000_000 }
 
     fn lead_ns(&self) -> i64 { if self.bt { prefs().bt_audio_lead_ms.clamp(0, LEAD_MAX) as i64 * 1_000_000 } else { 0 } }
 
@@ -361,6 +372,17 @@ impl PlayerUi {
                     p.bt_audio_lead_ms = (p.bt_audio_lead_ms + if k == Key::Left { -LEAD_STEP } else { LEAD_STEP }).clamp(0, LEAD_MAX);
                     crate::app::set_prefs(p);
                     self.lead_pending = Some(Instant::now());
+                }
+                return Action::None;
+            }
+            // subtitle timing: Left/Right change it, applied at once (no restart needed)
+            if entries.get(m.idx).and_then(|e| e.1).map_or(false, |e| e.0 == 't') && matches!(k, Key::Left | Key::Right | Key::Ok) {
+                if k != Key::Ok {
+                    let mut p = prefs();
+                    p.sub_delay_ms = (p.sub_delay_ms + if k == Key::Left { -SUB_DELAY_STEP } else { SUB_DELAY_STEP }).clamp(-SUB_DELAY_MAX, SUB_DELAY_MAX);
+                    crate::log!("player: subtitles {} ms later", p.sub_delay_ms);
+                    crate::app::set_prefs(p);
+                    self.shown_cue = None;
                 }
                 return Action::None;
             }
@@ -630,8 +652,9 @@ impl PlayerUi {
             if touched { if let Some(i) = self.sub { if self.sub_is_local(i) { self.cues = self.local_cues.get(&i).cloned().unwrap_or_default(); } } }
         }
         // image subtitles: move due events to the screen
+        let spos = self.sub_clock(player);
         for ev in player.take_subs() { self.img_q.push_back(ev); }
-        while self.img_q.front().map_or(false, |e| e.start_ns <= pos) {
+        while self.img_q.front().map_or(false, |e| e.start_ns <= spos) {
             let ev = self.img_q.pop_front().unwrap();
             self.drop_img();
             if !ev.rects.is_empty() {
@@ -640,15 +663,15 @@ impl PlayerUi {
             }
             busy = true;
         }
-        if let Some((_, Some(end), _, _)) = &self.img_cur { if pos > *end { self.drop_img(); } }
+        if let Some((_, Some(end), _, _)) = &self.img_cur { if spos > *end { self.drop_img(); } }
         // text subtitles: redraw exactly when the visible cue changes (rendering is event-driven)
         // (several cues can be up at once: the set is identified by its first index and count)
-        let mut act = self.cues.iter().enumerate().take_while(|(_, c)| c.start <= pos).filter(|(_, c)| pos <= c.end).map(|(i, _)| i);
+        let mut act = self.cues.iter().enumerate().take_while(|(_, c)| c.start <= spos).filter(|(_, c)| spos <= c.end).map(|(i, _)| i);
         let cue = act.next().map(|first| first * 1000 + 1 + act.count());
         if cue != self.shown_cue {
             self.shown_cue = cue;
             busy = true;
-            if let Some(c) = cue.and_then(|c| self.cues.get(c / 1000)) { crate::log!("sub @{} ms: {}", pos / 1_000_000, c.lines.join(" / ").chars().take(80).collect::<String>()); }
+            if let Some(c) = cue.and_then(|c| self.cues.get(c / 1000)) { crate::log!("sub @{} ms: {}", spos / 1_000_000, c.lines.join(" / ").chars().take(80).collect::<String>()); }
         }
         // OSD auto-hide
         if Instant::now() > self.osd_until && self.seek.is_none() && !player.paused() { self.osd.set(0.0); }
@@ -693,7 +716,7 @@ impl PlayerUi {
                 g.image(t, Rect::new(ox + r.x as f32 * s, oy + r.y as f32 * s - lift * 0.6, r.w as f32 * s, r.h as f32 * s), 0.0, 1.0, 0.5, 0.5);
             }
         }
-        let pos = if has_pic { player.position_ns() } else { self.last_pos };
+        let pos = if has_pic { self.sub_clock(player) } else { self.last_pos };
         let mut shown: Vec<&String> = vec![];
         // not before the picture: after a seek playback starts at the keyframe before the target
         for c in self.cues.iter().filter(|_| has_pic).take_while(|c| c.start <= pos).filter(|c| pos <= c.end) {
