@@ -20,11 +20,27 @@ Developed and tested on one TV; other models are untested. If it works (or doesn
 
 | | |
 |---|---|
+| Status | **Functional** |
 | TV | LG OLED55B4ELA (OLED B4, 2024, EU) |
 | Firmware | 33.31.75 |
 | webOS | webOS TV 25 (webOS 10.3.2, board K24) |
 | Root / homebrew | rooted, Homebrew Channel 0.7.3, SSH on |
 | Jellyfin server | 12.2.0 |
+|---|---|
+| Status | **Not functional** |
+| TV | LG OLED55C2PUA (OLED C2, 2022, US) |
+| Firmware | 23.20.56 |
+| webOS | webOS TV 24 |
+| Root / Homebrew | Rooted, HB Channel 0.7.3, SSH on |
+| Jellyfin server | 12.2.0 |
+|---|---|
+| Status | **Functional** |
+| TV | LG OLED55C2PUA (OLED C2, 2022, US) |
+| Firmware | 33.22.52 |
+| webOS | webOS TV 25 (webOS 10.2.1) |
+| Root / Homebrew | Rooted, HB Channel 0.7.3, SSH on |
+| Jellyfin server | 12.2.0 |
+
 
 ## Install
 
